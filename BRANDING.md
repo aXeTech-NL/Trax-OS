@@ -40,9 +40,15 @@ It may include a secondary attribution such as:
 
 > Based on Trax OS.
 
+## White-label deployments
+
+The public product may expose portable workspace-branding and custom-domain configuration. Using those capabilities does not grant a licence to present a deployment as an official Trax OS service.
+
+A white-label deployment should use the agency's own customer-facing identity, legal links, support details and domain. A separately distributed branded application also requires distinct package identifiers, signing keys, publisher accounts, update channels and release ownership. Any use of official Trax OS or Atlas marks remains subject to the trademark policy or a separate written agreement.
+
 ## Visual system
 
-The detailed Trax OS visual identity is documented in `DESIGN_SYSTEM.md`.
+The detailed Trax OS visual identity is documented in [`docs/design/DESIGN_SYSTEM.md`](docs/design/DESIGN_SYSTEM.md).
 
 The source-code licence does not automatically grant rights to reuse the official logo, app icon, marketing artwork or protected brand assets in a competing or modified product.
 

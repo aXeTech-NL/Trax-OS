@@ -57,6 +57,29 @@ A pull request should:
 - avoid unrelated formatting changes;
 - disclose generated or AI-assisted code where this materially affects review or provenance.
 
+## Architecture requirements
+
+Changes must preserve the shared application core described in [`docs/architecture/AGENTIC_CORE.md`](docs/architecture/AGENTIC_CORE.md):
+
+- every meaningful state mutation enters through a versioned command handler;
+- REST, MCP, Atlas, workers and offline sync remain adapters and do not duplicate business rules or write directly to persistence;
+- query handlers are read-only;
+- command handlers cover actor identity, authorisation, validation, domain rules, optimistic concurrency, transactions, change-set auditing and reversibility;
+- high-risk or irreversible actions use preview and explicit approval;
+- retries and offline synchronisation are idempotent by `command_id`;
+- sensitive device-only document content and decryption keys are never persisted centrally;
+- Personal and Agency workspaces reuse the same core and remain tenant-isolated;
+- role definitions use stable permission keys and scoped assignments;
+- custom roles cannot override non-configurable security invariants or delegate unavailable permissions;
+- Atlas model providers use the public provider contract and never create alternative command or context permissions;
+- BYO credentials use the `CredentialStore` boundary and custom endpoints are treated as SSRF-sensitive egress;
+- V1 web research writes bounded cited candidates only; source verification and user adoption are separate controlled steps;
+- web content is untrusted and cannot alter MCP scope, policy or command authority;
+- travel-party and traveller-private filtering occurs server-side in queries, sync, search and model context;
+- public command, API, MCP, sync and capability contracts remain backward compatible or are explicitly versioned.
+
+Pull requests that change a domain boundary, trust boundary, public contract, persistence model or reversibility policy must update the affected canonical architecture documents and explain the rationale and compatibility impact in the pull request.
+
 ## Security issues
 
 Do not report vulnerabilities in a public issue. Follow `SECURITY.md`.

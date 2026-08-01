@@ -32,6 +32,36 @@ Do not include:
 - private keys;
 - unrelated confidential information.
 
+## Architecture-sensitive security areas
+
+Reports are especially welcome for issues involving:
+
+- command authorisation, scope enforcement or actor impersonation;
+- command replay, idempotency or optimistic-concurrency bypasses;
+- audit-log or change-set integrity;
+- OAuth Authorization Code with PKCE, redirect URI validation and token rotation;
+- MCP tool/resource scope isolation;
+- offline sync conflicts or cross-workspace data exposure;
+- privilege escalation through custom roles, assignments or delegation;
+- agency-staff access to a traveller's Personal workspace;
+- cross-party leakage—including transitive leakage through a traveller with multiple memberships—through queries, search, Atlas, MCP, notifications or offline caches;
+- stale access after role, party or journey membership revocation;
+- entitlement or capability checks being mistaken for authorisation;
+- custom-domain or white-label configuration crossing workspace boundaries;
+- BYO model-provider API key disclosure or cross-workspace secret access;
+- custom model-endpoint or submitted-source SSRF, DNS rebinding, redirect or metadata-service access;
+- indirect prompt injection causing MCP scope escalation or candidate-review bypass;
+- fabricated citations or unverified safety/health/entry data becoming trusted state;
+- Atlas context leakage across providers or silent paid-provider fallback;
+- device identity, key wrapping and secure transfer;
+- server access to device-only document plaintext or decryption keys;
+- central-file size/MIME/malware verification or quarantine bypass;
+- Row-Level Security policy gaps for workspace/party data;
+- prompts, document content or health data entering telemetry;
+- browser caching or retention of memory-only document sessions.
+
+Device-only documents must remain end-to-end encrypted. Do not attach real identity, medical or travel documents to a vulnerability report; use synthetic test data.
+
 ## Disclosure
 
 The maintainers aim to coordinate remediation and disclosure responsibly. Do not publicly disclose an unresolved vulnerability before a reasonable remediation period has passed, unless required by law or necessary to prevent immediate harm.
