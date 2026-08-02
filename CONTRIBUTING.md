@@ -25,7 +25,7 @@ make bootstrap       # npm ci, then uv sync --locked
 make generate        # update canonical generated contracts
 make check           # contract, format, lint, type and test gates
 make test            # focused test suites only
-make dev             # start API and web development servers
+make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate the development database configuration
 ```
 

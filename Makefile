@@ -24,7 +24,7 @@ test:
 
 check: contract-check api-check web-check test
 
-dev:
+dev: bootstrap
 	npm run dev
 
 compose-config:

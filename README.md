@@ -21,7 +21,7 @@ make bootstrap       # clean installs from package-lock.json and uv.lock
 make generate        # regenerate OpenAPI and TypeScript contracts
 make check           # contract drift, formatting, lint, types and focused tests
 make test            # focused API and web tests
-make dev             # API :8000 and web :5173
+make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate compose.yaml without starting services
 ```
 
