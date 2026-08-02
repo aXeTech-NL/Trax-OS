@@ -19,6 +19,10 @@
         "kind": "repository",
         "path": "SECURITY.md",
         "anchor": "architecture-sensitive-security-areas"
+      },
+      {
+        "kind": "issue-or-review",
+        "url": "https://github.com/aXeTech-NL/Trax-OS/commit/78c6b5dd8aa4a35c2bcb747c2ce154ea9b363bc1"
       }
     ]
   },

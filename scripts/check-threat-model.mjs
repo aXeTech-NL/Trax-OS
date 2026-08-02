@@ -213,6 +213,14 @@ function repositoryCommitExists(root, commit) {
   return result.status === 0;
 }
 
+function repositoryIsShallow(root) {
+  const result = spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return result.status === 0 && result.stdout.trim() === "true";
+}
+
 function loadModelAtCommit(root, commit, modelPath) {
   const result = spawnSync("git", ["show", `${commit}:${modelPath}`], {
     cwd: root,
@@ -626,8 +634,19 @@ export function validateModel(model, { root = repositoryRoot, closure = false, o
 
   const baseline = requireObject(errors, model.architectureBaseline, "$.architectureBaseline");
   if (baseline) {
-    if (!/^[0-9a-f]{40}$/.test(baseline.commit ?? "")) errors.push(diagnostic("BASELINE_COMMIT", "$.architectureBaseline.commit", "must be a 40-character lowercase commit"));
-    else if (!repositoryCommitExists(root, baseline.commit)) errors.push(diagnostic("BASELINE_COMMIT_MISSING", "$.architectureBaseline.commit", "must exist in this repository"));
+    if (!/^[0-9a-f]{40}$/.test(baseline.commit ?? "")) {
+      errors.push(diagnostic("BASELINE_COMMIT", "$.architectureBaseline.commit", "must be a 40-character lowercase commit"));
+    } else if (!repositoryCommitExists(root, baseline.commit)) {
+      if (!repositoryIsShallow(root)) {
+        errors.push(diagnostic("BASELINE_COMMIT_MISSING", "$.architectureBaseline.commit", "must exist in a full repository clone"));
+      } else {
+        const immutableReference = `https://github.com/aXeTech-NL/Trax-OS/commit/${baseline.commit}`;
+        const references = arrayOrEmpty(baseline.references);
+        if (!references.some((reference) => reference?.kind === "issue-or-review" && reference.url === immutableReference)) {
+          errors.push(diagnostic("BASELINE_COMMIT_REFERENCE", "$.architectureBaseline.references", `shallow validation requires ${immutableReference}`));
+        }
+      }
+    }
     requireIsoDate(errors, baseline.reviewedAt, "$.architectureBaseline.reviewedAt");
     validateReferences(errors, baseline.references, root, "$.architectureBaseline.references");
   }

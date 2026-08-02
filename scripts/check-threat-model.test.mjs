@@ -70,6 +70,10 @@ function createReviewedRepository() {
   git(root, ["commit", "-q", "-m", "fixture reference files"]);
   const baselineCommit = git(root, ["rev-parse", "HEAD"]);
   snapshot.architectureBaseline.commit = baselineCommit;
+  const commitReference = snapshot.architectureBaseline.references.find(
+    (reference) => reference.kind === "issue-or-review" && reference.url.includes("/commit/"),
+  );
+  commitReference.url = `https://github.com/aXeTech-NL/Trax-OS/commit/${baselineCommit}`;
   const modelPath = join(root, "docs/security/phase-0-threat-model.json");
   mkdirSync(dirname(modelPath), { recursive: true });
   writeFileSync(modelPath, `${JSON.stringify(snapshot, null, 2)}\n`);
@@ -137,7 +141,7 @@ function createReviewedRepository() {
       "",
     ].join("\n"),
   );
-  return { root, model, reviewedCommit };
+  return { root, model, baselineCommit, reviewedCommit };
 }
 
 const reviewedRepository = createReviewedRepository();
@@ -160,6 +164,24 @@ function acceptedOverview() {
 
 test("production register passes normal validation", () => {
   assert.deepEqual(diagnostics(clone()), []);
+});
+
+test("shallow clones may validate an unavailable architecture baseline only with its immutable commit reference", () => {
+  const parent = mkdtempSync(join(tmpdir(), "trax-shallow-validation-"));
+  const root = join(parent, "clone");
+  try {
+    git(parent, ["clone", "-q", "--depth", "1", `file://${reviewedRepository.root}`, root]);
+    assert.equal(git(root, ["rev-parse", "--is-shallow-repository"]), "true");
+    const model = loadModel(join(root, "docs/security/phase-0-threat-model.json"));
+    assert.deepEqual(diagnostics(model, { root }), []);
+
+    model.architectureBaseline.references = model.architectureBaseline.references.filter(
+      (reference) => !(reference.kind === "issue-or-review" && reference.url.includes("/commit/")),
+    );
+    assertCode(model, "BASELINE_COMMIT_REFERENCE", { root });
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 test("production register has the expanded complete inventory", () => {
@@ -633,15 +655,11 @@ test("a fully bound synthetic independent fixture passes closure", () => {
   assert.deepEqual(diagnostics(closureFixture(), closureOptions()), []);
 });
 
-test("closure rejects an existing unrelated historical commit without the reviewed model", () => {
+test("closure rejects a deterministic unrelated fixture commit without the reviewed model", () => {
   const model = closureFixture();
-  model.reviews[0].reviewedCommit = base.architectureBaseline.commit;
-  model.evidence.find((entry) => entry.id === "EV-PHASE0-REVIEW").execution.commit = base.architectureBaseline.commit;
-  assertCode(model, "CLOSURE_SNAPSHOT_MISSING", {
-    root: repositoryRoot,
-    closure: true,
-    overviewContent: acceptedOverview(),
-  });
+  model.reviews[0].reviewedCommit = reviewedRepository.baselineCommit;
+  model.evidence.find((entry) => entry.id === "EV-PHASE0-REVIEW").execution.commit = reviewedRepository.baselineCommit;
+  assertCode(model, "CLOSURE_SNAPSHOT_MISSING", closureOptions());
 });
 
 test("closure rejects immutable design drift after the reviewed snapshot", () => {
