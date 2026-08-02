@@ -29,7 +29,7 @@ make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate the development database configuration
 ```
 
-Run `make generate` after changing a public FastAPI response. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails when they drift. Do not commit `.env`, dependency directories, caches, builds or database data.
+Run `make generate` after changing a public FastAPI response. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails when they drift. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
 
 npm workspaces and Pydantic/OpenAPI-first generation are provisional v0.1 choices, exposed behind root commands where practical. Changing either contract authority or workspace strategy requires explicit architecture review.
 

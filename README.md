@@ -25,7 +25,7 @@ make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate compose.yaml without starting services
 ```
 
-The API exposes `GET /health/live`, `GET /health/ready`, `GET /api/v1/version` and `GET /api/v1/capabilities`. During `make dev`, Vite proxies `/api` and `/health` to the API.
+The API exposes `GET /health/live`, `GET /health/ready`, `GET /api/v1/version` and `GET /api/v1/capabilities`. During `make dev`, Vite proxies `/api` and `/health` to the API. Both `make dev` and `npm run dev` perform the locked npm/uv bootstrap before startup.
 
 npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment. The root Make interface keeps common workflows stable. Pydantic/OpenAPI-first generation is likewise a provisional v0.1 contract foundation rather than a final architecture decision. See [Foundation development](docs/development/FOUNDATION.md).
 

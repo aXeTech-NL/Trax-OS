@@ -9,6 +9,7 @@
     "packages/api-contract"
   ],
   "scripts": {
+    "predev": "npm ci && uv sync --project apps/api --locked",
     "dev": "concurrently -k -n api,web -c blue,green \"uv run --project apps/api uvicorn trax_api.main:app --reload --port 18000\" \"npm run dev --workspace @trax-os/web\"",
     "generate": "node scripts/contracts.mjs generate",
     "contract:check": "node scripts/contracts.mjs check"
