@@ -1,7 +1,7 @@
 # Target Domain Model
 
 **Status:** Canonical V1 domain model  
-**Note:** Names and fields are architectural contracts, not a substitute for reviewed migrations.
+**Note:** Names and fields are architectural contracts, not a substitute for reviewed migrations. [ADR-004](decisions/ADR-004-CANONICAL-TERMINOLOGY.md), [ADR-005](decisions/ADR-005-MEMBERSHIP-AND-PARTICIPATION.md) and [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md) define the accepted terminology, relationship and access semantics.
 
 ## 1. Modelling goals
 
@@ -73,6 +73,7 @@ Credential and refresh-session records are server-only and never synchronize to 
 
 ```text
 traveler_profiles
+traveler_user_links
 traveler_guardian_relationships
 traveler_private_profiles
 journeys
@@ -87,13 +88,15 @@ Journey invitations use single-purpose hashed tokens, a seven-day default expiry
 
 Access and participation remain separate:
 
-- `journey_membership` links a user/principal to access state and scoped role assignment;
-- `journey_participant` links a traveller profile to the journey;
+- `journey_membership` records a user's Journey-access lifecycle, and only an active membership is an access basis;
+- scoped role assignments remain separate from membership state;
+- `journey_participant` links a traveller profile to the Journey;
+- a verified user↔traveller identity link may establish a self relationship but grants no access by itself;
 - a traveller may exist without a user account;
-- a user may manage a journey without travelling;
+- a user may manage a Journey without travelling;
 - guardian authority is explicit and never inferred from `adult` or `child` labels.
 
-A traveller may have multiple active privacy-party memberships in one journey. Party access is non-transitive: a caller's own exact membership may authorise one party resource, but a shared traveller never connects or merges parties for other members. Each `party_shared` resource belongs to exactly one party; broader sharing uses `journey_shared` or explicit grants. An optional primary/default membership is UI metadata only.
+A traveller may have multiple active privacy-party memberships in one Journey. Party membership references the Journey participant. Party access is non-transitive: a caller's own exact relationship may authorise one party resource, but a shared traveller never connects or merges parties for other members. Each `party_shared` resource retains exactly one party owner; `journey_shared` is a separate audience, and a bounded resource grant authorises access without reclassifying the resource. An optional primary/default party membership is UI metadata only.
 
 Illustrative journey fields:
 
@@ -182,15 +185,16 @@ emergency_info
 
 Tasks support status, priority, due time, assignee, source, archive and contextual links. Assignees require current applicable access.
 
-Notes carry an audience rather than only a global journey flag:
+Notes carry one audience rather than only a global Journey flag:
 
 ```text
+agency_internal
 journey_shared
 party_shared
 traveler_private
-agency_internal
-explicit_grants
 ```
+
+Resource grants are stored separately and may authorise only bounded operations and fields under [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md); they are not an audience value.
 
 Emergency records remain manually editable without providers or Atlas and may link to travellers, places and documents through validated context links.
 
@@ -433,7 +437,8 @@ Before migrations are accepted:
 - every table is classified as syncable, server-only, provider cache, audit, central file metadata, encrypted transfer metadata or device-local;
 - every journey FK preserves workspace consistency;
 - every party-private record preserves party/journey/workspace consistency;
-- access and participation are separate;
+- access and participation are separate as defined by [ADR-005](decisions/ADR-005-MEMBERSHIP-AND-PARTICIPATION.md);
+- audiences and grants obey the non-transitive algebra in [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md);
 - permissions and roles are scoped/versioned;
 - dates, amounts, quantities, coordinates and paired fields have checks;
 - planning and scheduled records are separate;

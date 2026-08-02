@@ -871,7 +871,7 @@ AGENCY workspace
 └── journey portfolio, organisers, leaders, configurable roles and travel parties
 ```
 
-A user may own a Personal workspace while also participating in agency-created journeys or working in an Agency workspace. Membership and data never cross workspace boundaries implicitly. An agency invitation creates journey access, not agency staff access, and does not expose the traveller's Personal workspace.
+A user may own a Personal workspace while also participating in agency-created journeys or working in an Agency workspace. Membership and data never cross workspace boundaries implicitly. An accepted, identity-verified agency invitation may activate only the approved Journey membership and scoped assignments; the invitation, participation and identity link alone create no access. It never creates agency staff access or exposes the traveller's Personal workspace.
 
 Agency access is based on a public Roles & Permissions module:
 
@@ -879,10 +879,11 @@ Agency access is based on a public Roles & Permissions module:
 - agencies may create versioned custom roles from stable permission keys;
 - role assignments are scoped to platform, workspace, journey, party or traveller;
 - a principal cannot delegate permissions they do not hold as delegable;
-- resource audiences further restrict data to `agency_internal`, `journey_shared`, `party_shared`, `traveler_private` or explicit grants;
+- resources retain exactly one audience: `agency_internal`, `journey_shared`, `party_shared` or `traveler_private`;
+- bounded resource grants are a separate authorisation path and never reclassify an audience or create membership;
 - non-configurable tenant, audit, risk and device-crypto invariants override role configuration.
 
-A travel party is a privacy boundary within a group journey. A traveller may have multiple party memberships, but access never propagates transitively between parties through that traveller. Every party-scoped resource belongs to one exact party unless deliberately broadened through `journey_shared` or an explicit grant. Filtering occurs server-side in queries, sync, search and model retrieval.
+Journey access membership is separate from travel participation. A travel party is a privacy boundary within a group Journey. A traveller may have multiple party memberships, but access never propagates transitively between parties through that traveller. Every party-scoped resource retains one exact party; `journey_shared` is a separate classification, and a bounded grant may authorise specific access without merging audiences. Filtering occurs server-side in queries, sync, search and model retrieval. See [ADR-005](decisions/ADR-005-MEMBERSHIP-AND-PARTICIPATION.md) and [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md).
 
 `platform_super_admin` is an operational role. Customer-content access uses an explicit, time-limited, audited break-glass session and can never provide device-only plaintext or decryption keys.
 
