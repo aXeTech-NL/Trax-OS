@@ -5,25 +5,28 @@ import { join } from "node:path";
 
 const previewPort = Number(process.env.TRAX_PREVIEW_PORT ?? 4174);
 const debugPort = Number(process.env.TRAX_CHROME_DEBUG_PORT ?? 9224);
-const origin = `http://127.0.0.1:${previewPort}`;
+const externalOrigin = process.env.TRAX_PWA_ORIGIN?.replace(/\/$/, "");
+const origin = externalOrigin ?? `http://127.0.0.1:${previewPort}`;
 const chrome = process.env.CHROME_BIN ?? "google-chrome";
 const profile = await mkdtemp(join(tmpdir(), "trax-pwa-"));
 const children = [];
 
 try {
-  const preview = start(
-    process.execPath,
-    [
-      "../../node_modules/vite/bin/vite.js",
-      "preview",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(previewPort),
-    ],
-    { cwd: new URL("..", import.meta.url) },
-  );
-  children.push(preview);
+  if (!externalOrigin) {
+    const preview = start(
+      process.execPath,
+      [
+        "../../node_modules/vite/bin/vite.js",
+        "preview",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(previewPort),
+      ],
+      { cwd: new URL("..", import.meta.url) },
+    );
+    children.push(preview);
+  }
   await waitFor(`${origin}/`);
 
   const browser = start(chrome, [
@@ -47,6 +50,12 @@ try {
   const client = await cdp(target.webSocketDebuggerUrl);
   await client.command("Page.enable");
   await client.command("Network.enable");
+  if (externalOrigin) {
+    await waitForHeading(client, "Sign in to Trax OS");
+    console.log(
+      "Connected Compose web boot passed: authenticated server-backed sign-in rendered",
+    );
+  }
   await waitForController(client);
   await client.command("Page.reload", { ignoreCache: false });
   await waitForController(client);
@@ -109,6 +118,18 @@ async function waitFor(url) {
     await sleep(200);
   }
   throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function waitForHeading(client, expectedHeading) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const evaluation = await client.command("Runtime.evaluate", {
+      expression: "document.querySelector('h1')?.textContent",
+      returnByValue: true,
+    });
+    if (evaluation.result.value === expectedHeading) return;
+    await sleep(200);
+  }
+  throw new Error(`Timed out waiting for heading: ${expectedHeading}`);
 }
 
 async function waitForController(client) {

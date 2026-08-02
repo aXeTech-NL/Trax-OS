@@ -1,5 +1,24 @@
 name: trax-os-foundation
 
+x-api-build: &api-build
+  context: .
+  dockerfile: apps/api/Dockerfile
+
+x-api-environment: &api-environment
+  TRAX_DATABASE_URL: ${TRAX_COMPOSE_DATABASE_URL:-postgresql+asyncpg://trax:trax-development-only@database:5432/trax}
+  TRAX_SESSION_COOKIE_SECURE: ${TRAX_SESSION_COOKIE_SECURE:-false}
+  TRAX_SESSION_TTL_SECONDS: ${TRAX_SESSION_TTL_SECONDS:-2592000}
+
+x-restricted-service: &restricted-service
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 services:
   database:
     image: postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
@@ -19,6 +38,73 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  migration:
+    <<: *restricted-service
+    build: *api-build
+    restart: "no"
+    environment: *api-environment
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    depends_on:
+      database:
+        condition: service_healthy
+
+  api:
+    <<: *restricted-service
+    build: *api-build
+    restart: unless-stopped
+    environment: *api-environment
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          response = urllib.request.urlopen('http://127.0.0.1:18000/health/ready', timeout=3);
+          payload = json.load(response);
+          assert response.status == 200 and payload['status'] == 'ready'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  web:
+    <<: *restricted-service
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TRAX_WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8080/health/ready",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  smoke:
+    <<: *restricted-service
+    profiles: [acceptance]
+    build: *api-build
+    restart: "no"
+    environment:
+      TRAX_SMOKE_URL: http://web:8080
+    command: ["python", "scripts/compose_smoke.py"]
+    depends_on:
+      web:
+        condition: service_healthy
 
 volumes:
   postgres-data:
