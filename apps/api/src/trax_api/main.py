@@ -36,8 +36,8 @@ def create_app() -> FastAPI:
         title="Trax OS API",
         summary="Public Trax OS API foundation",
         description=(
-            "Versioned foundation contract. OpenAPI/Pydantic is the provisional canonical "
-            "contract source for v0.1."
+            "Versioned foundation contract. Pydantic wire models and FastAPI route metadata "
+            "are the canonical authored source for the V1 HTTP contract."
         ),
         version=__version__,
         lifespan=lifespan,

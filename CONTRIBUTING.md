@@ -22,7 +22,7 @@ Use Node.js 22/npm 10, Python 3.12 and uv 0.12. The checked-in npm and uv lockfi
 
 ```bash
 make bootstrap       # npm ci, then uv sync --locked
-make generate        # update canonical generated contracts
+make generate        # update generated OpenAPI, TypeScript and runtime fixtures
 make db-up            # start the PostgreSQL/PostGIS development service
 make db-migrate       # apply explicit Alembic migrations
 make db-check         # detect migration/metadata drift
@@ -32,9 +32,9 @@ make dev              # install dependencies, then start API :18000 and web :517
 make compose-config   # validate the development database configuration
 ```
 
-Run `make generate` after changing a public FastAPI response. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails when they drift. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
+Run `make generate` after changing a public Pydantic wire model or FastAPI route declaration. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails on nondeterministic output, drift or compatibility-policy fixture regressions. CI also compares generated OpenAPI with the pull request base revision. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
 
-npm workspaces and Pydantic/OpenAPI-first generation are provisional v0.1 choices, exposed behind root commands where practical. Changing either contract authority or workspace strategy requires explicit architecture review.
+npm workspaces remain provisional pending issue #12 and are exposed behind root commands where practical. [ADR-002](docs/architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) defines the accepted Pydantic/FastAPI authority, generated package ownership and compatibility policy. Changing contract authority or compatibility policy requires a new reviewed architecture decision.
 
 ## Contribution workflow
 

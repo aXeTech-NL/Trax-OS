@@ -1,4 +1,4 @@
-.PHONY: bootstrap generate contract-check api-check web-check test check dev compose-config db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check contract-compat api-check web-check test check dev compose-config db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -9,6 +9,10 @@ generate:
 
 contract-check:
 	npm run contract:check
+
+contract-compat:
+	@test -n "$(BASE_CONTRACT)" || (echo "BASE_CONTRACT is required" >&2; exit 2)
+	npm run contract:compat -- "$(BASE_CONTRACT)" packages/api-contract/generated/openapi.json
 
 api-check:
 	uv run --project apps/api ruff format --check apps/api

@@ -743,6 +743,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -820,7 +822,10 @@ export interface operations {
     readonly logout_route_api_v1_auth_logout_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path?: never;
             readonly cookie?: never;
         };
@@ -829,6 +834,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -919,6 +926,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 201: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1005,6 +1014,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1179,6 +1190,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1256,7 +1269,10 @@ export interface operations {
     readonly create_journey_api_v1_journeys_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path?: never;
             readonly cookie?: never;
         };
@@ -1269,6 +1285,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 201: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1357,6 +1375,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1434,7 +1454,10 @@ export interface operations {
     readonly update_journey_api_v1_journeys__journey_id__put: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
             };
@@ -1449,6 +1472,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1526,7 +1551,10 @@ export interface operations {
     readonly delete_journey_api_v1_journeys__journey_id__delete: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
             };
@@ -1625,6 +1653,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1702,7 +1732,10 @@ export interface operations {
     readonly create_packing_api_v1_journeys__journey_id__packing_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
             };
@@ -1717,6 +1750,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 201: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1794,7 +1829,10 @@ export interface operations {
     readonly update_packing_api_v1_journeys__journey_id__packing__item_id__put: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly item_id: string;
@@ -1810,6 +1848,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -1887,7 +1927,10 @@ export interface operations {
     readonly delete_packing_api_v1_journeys__journey_id__packing__item_id__delete: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly item_id: string;
@@ -1899,6 +1942,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 204: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -1974,7 +2019,10 @@ export interface operations {
     readonly update_packing_progress_api_v1_journeys__journey_id__packing__item_id__progress_put: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly item_id: string;
@@ -1990,6 +2038,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2078,6 +2128,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2155,7 +2207,10 @@ export interface operations {
     readonly create_segment_api_v1_journeys__journey_id__segments_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
             };
@@ -2170,6 +2225,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 201: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2247,7 +2304,10 @@ export interface operations {
     readonly update_segment_api_v1_journeys__journey_id__segments__segment_id__put: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly segment_id: string;
@@ -2263,6 +2323,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2340,7 +2402,10 @@ export interface operations {
     readonly delete_segment_api_v1_journeys__journey_id__segments__segment_id__delete: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly segment_id: string;
@@ -2352,6 +2417,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 204: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content?: never;
@@ -2427,7 +2494,10 @@ export interface operations {
     readonly reorder_segment_api_v1_journeys__journey_id__segments__segment_id__reorder_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
             readonly path: {
                 readonly journey_id: string;
                 readonly segment_id: string;
@@ -2443,6 +2513,8 @@ export interface operations {
             /** @description Successful Response */
             readonly 200: {
                 headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
                     readonly [name: string]: unknown;
                 };
                 content: {
@@ -2667,6 +2739,17 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An implemented dependency is unavailable */
+            readonly 503: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReadyResponse"];
                 };
             };
         };

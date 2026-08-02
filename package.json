@@ -12,9 +12,11 @@
     "predev": "npm ci && uv sync --project apps/api --locked",
     "dev": "concurrently -k -n api,web -c blue,green \"uv run --project apps/api uvicorn trax_api.main:app --reload --port 18000\" \"npm run dev --workspace @trax-os/web\"",
     "generate": "node scripts/contracts.mjs generate",
-    "contract:check": "node scripts/contracts.mjs check"
+    "contract:check": "node scripts/contracts.mjs check && node --test scripts/contracts.test.mjs scripts/contract-compatibility.test.mjs",
+    "contract:compat": "node scripts/contract-compatibility.mjs"
   },
   "devDependencies": {
+    "api-smart-diff": "1.0.6",
     "concurrently": "9.1.2",
     "openapi-typescript": "7.8.0"
   },

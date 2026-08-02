@@ -1,12 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
 
+import runtimeFixtures from "../../../../packages/api-contract/generated/runtime-fixtures.json";
 import {
   HttpInstanceRepository,
   InstanceRepositoryError,
 } from "./http-instance-repository";
 
 describe("HttpInstanceRepository", () => {
-  test("maps version and capabilities from the public contract", async () => {
+  test("maps generated Python runtime fixtures through the public contract", async () => {
     const request = vi
       .fn<typeof globalThis.fetch>()
       .mockImplementation((url) => {
@@ -17,13 +18,8 @@ describe("HttpInstanceRepository", () => {
               ? url.href
               : url.url;
         const body = address.endsWith("/version")
-          ? { application: "Trax OS", version: "0.1.0", api_version: "1" }
-          : {
-              schema_version: "1",
-              capabilities: [
-                { key: "foundation.contract-discovery", status: "available" },
-              ],
-            };
+          ? runtimeFixtures.version
+          : runtimeFixtures.capabilities;
         return Promise.resolve(
           new Response(JSON.stringify(body), {
             status: 200,
@@ -38,12 +34,10 @@ describe("HttpInstanceRepository", () => {
     ).getInstance();
 
     expect(result).toEqual({
-      application: "Trax OS",
-      version: "0.1.0",
-      apiVersion: "1",
-      capabilities: [
-        { key: "foundation.contract-discovery", status: "available" },
-      ],
+      application: runtimeFixtures.version.application,
+      version: runtimeFixtures.version.version,
+      apiVersion: runtimeFixtures.version.api_version,
+      capabilities: runtimeFixtures.capabilities.capabilities,
     });
     expect(request).toHaveBeenCalledTimes(2);
   });
