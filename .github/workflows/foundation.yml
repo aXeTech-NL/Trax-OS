@@ -19,6 +19,23 @@ jobs:
     name: Foundation
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TRAX_DATABASE_URL: postgresql+asyncpg://trax:trax-ci-only@127.0.0.1:5432/trax
+      TRAX_SESSION_COOKIE_SECURE: "false"
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
+        env:
+          POSTGRES_DB: trax
+          POSTGRES_USER: trax
+          POSTGRES_PASSWORD: trax-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trax -d trax"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -34,8 +51,14 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: make bootstrap
+      - name: Migrate empty PostgreSQL database
+        run: make db-migrate
+      - name: Verify migration metadata has no drift
+        run: make db-check
       - name: Run foundation checks and production build
         run: make check
+      - name: Prove production PWA navigation works offline
+        run: npm run test:pwa --workspace @trax-os/web
       - name: Audit npm dependencies
         run: npm audit --audit-level=high
       - name: Validate development Compose configuration

@@ -12,7 +12,10 @@ def test_health_endpoints_have_typed_responses() -> None:
     assert live.status_code == 200
     assert live.json() == {"status": "live"}
     assert ready.status_code == 200
-    assert ready.json() == {"status": "ready", "checks": {"api": "ready"}}
+    assert ready.json() == {
+        "status": "ready",
+        "checks": {"api": "ready", "database": "ready"},
+    }
 
 
 def test_version_and_capability_discovery() -> None:
@@ -25,6 +28,10 @@ def test_version_and_capability_discovery() -> None:
         "schema_version": "1",
         "capabilities": [
             {"key": "foundation.contract-discovery", "status": "available"},
+            {"key": "identity.password-session", "status": "available"},
+            {"key": "journeys.server-authority", "status": "available"},
+            {"key": "journeys.timeline", "status": "available"},
+            {"key": "journeys.packing", "status": "available"},
         ],
     }
 

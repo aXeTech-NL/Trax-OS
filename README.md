@@ -10,22 +10,30 @@ Official clients are intended to work with either a self-hosted Trax OS server o
 
 Trax OS was initiated by Marcel Marinus Bijl, trading as aXeTech, a sole proprietorship registered with the Dutch Chamber of Commerce (KVK). It is intended to grow as an open community project rather than a closed, vendor-controlled product.
 
-> **Project status:** Version 0.1.0 is an executable development foundation. It provides public instance discovery, health checks, generated API contracts and a web shell; travel domains, identity, persistence integration and deployment remain intentionally unimplemented.
+> **Project status:** The current feature build includes an authenticated, PostgreSQL-backed Personal web API for sessions, Journeys, typed timeline items and packing, plus the integrated English/Dutch authenticated Journey web UI. Authoritative browser-local web mode was rejected; standalone local-only belongs to future encrypted Android/macOS clients.
 
-## Develop the v0.1 foundation
+## Server-backed web baseline
+
+The web product requires a self-hosted server and authenticated session. PostgreSQL—not IndexedDB—is authoritative, so clearing browser data cannot delete the only copy of a Journey. The current backend provides Argon2id password authentication, opaque/hashed sessions, CSRF protection, Personal workspace isolation, RLS defence in depth and Journey/timeline/packing APIs.
+
+The earlier IndexedDB authority was removed from production composition; the UI now uses the authenticated HTTP adapter and canonical server reloads. See [Server-backed web](docs/development/SERVER_BACKED_WEB.md) and [superseded local prototype](docs/development/LOCAL_JOURNEY_SLICE.md).
+
+## Develop the current foundation and server-backed app
 
 Prerequisites: Node.js 22, npm 10, Python 3.12 and [uv 0.12](https://docs.astral.sh/uv/). Docker Compose is optional and only needed for the PostgreSQL/PostGIS development service.
 
 ```bash
 make bootstrap       # clean installs from package-lock.json and uv.lock
+make db-up           # start development PostgreSQL/PostGIS
+make db-migrate      # apply explicit Alembic revisions
 make generate        # regenerate OpenAPI and TypeScript contracts
-make check           # contract drift, formatting, lint, types and focused tests
+make check           # contract drift, formatting, lint, types and PostgreSQL-backed tests
 make test            # focused API and web tests
 make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate compose.yaml without starting services
 ```
 
-The API exposes `GET /health/live`, `GET /health/ready`, `GET /api/v1/version` and `GET /api/v1/capabilities`. During `make dev`, Vite proxies `/api` and `/health` to the API. Both `make dev` and `npm run dev` perform the locked npm/uv bootstrap before startup.
+The API exposes public health/version/capability discovery, authenticated `/api/v1/auth/*`, and server-authoritative `/api/v1/journeys/*`. During `make dev`, Vite proxies `/api` and `/health` to the API. Run the database and migration commands before starting the API. The frontend registers/restores sessions and uses these authenticated endpoints for every Journey mutation.
 
 npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment. The root Make interface keeps common workflows stable. Pydantic/OpenAPI-first generation is likewise a provisional v0.1 contract foundation rather than a final architecture decision. See [Foundation development](docs/development/FOUNDATION.md).
 

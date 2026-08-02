@@ -17,10 +17,11 @@ class LiveResponse(WireModel):
 
 class ReadinessChecks(WireModel):
     api: Literal["ready"]
+    database: Literal["ready", "unavailable"]
 
 
 class ReadyResponse(WireModel):
-    status: Literal["ready"]
+    status: Literal["ready", "not_ready"]
     checks: ReadinessChecks
 
 

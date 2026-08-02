@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response
 
 from trax_api import __version__
 from trax_api.models import (
@@ -21,9 +21,24 @@ REQUEST_ID_RESPONSE_HEADER: dict[str, Any] = {
 }
 RESPONSE_HEADERS = {"X-Request-ID": REQUEST_ID_RESPONSE_HEADER}
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {
+        "model": ErrorResponse,
+        "description": "Authentication required or credentials invalid",
+        "headers": RESPONSE_HEADERS,
+    },
+    403: {
+        "model": ErrorResponse,
+        "description": "Authenticated request is not permitted or CSRF check failed",
+        "headers": RESPONSE_HEADERS,
+    },
     404: {
         "model": ErrorResponse,
         "description": "Resource not found",
+        "headers": RESPONSE_HEADERS,
+    },
+    409: {
+        "model": ErrorResponse,
+        "description": "Version or uniqueness conflict",
         "headers": RESPONSE_HEADERS,
     },
     422: {
@@ -54,9 +69,15 @@ def live() -> LiveResponse:
 
 
 @health_router.get("/ready", response_model=ReadyResponse, responses=SUCCESS_RESPONSE)
-def ready() -> ReadyResponse:
-    """Report readiness of the implemented foundation dependencies."""
-    return ReadyResponse(status="ready", checks=ReadinessChecks(api="ready"))
+async def ready(request: Request, response: Response) -> ReadyResponse:
+    """Report readiness of API and authoritative PostgreSQL storage."""
+    database_ready = await request.app.state.database.ready()
+    if not database_ready:
+        response.status_code = 503
+    return ReadyResponse(
+        status="ready" if database_ready else "not_ready",
+        checks=ReadinessChecks(api="ready", database="ready" if database_ready else "unavailable"),
+    )
 
 
 @api_router.get("/version", response_model=VersionResponse, responses=SUCCESS_RESPONSE)
@@ -70,5 +91,11 @@ def capabilities() -> CapabilitiesResponse:
     """Advertise only capabilities provided by this foundation."""
     return CapabilitiesResponse(
         schema_version="1",
-        capabilities=[Capability(key="foundation.contract-discovery", status="available")],
+        capabilities=[
+            Capability(key="foundation.contract-discovery", status="available"),
+            Capability(key="identity.password-session", status="available"),
+            Capability(key="journeys.server-authority", status="available"),
+            Capability(key="journeys.timeline", status="available"),
+            Capability(key="journeys.packing", status="available"),
+        ],
     )

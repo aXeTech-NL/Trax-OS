@@ -1,4 +1,4 @@
-.PHONY: bootstrap generate contract-check api-check web-check test check dev compose-config
+.PHONY: bootstrap generate contract-check api-check web-check test check dev compose-config db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -29,3 +29,15 @@ dev:
 
 compose-config:
 	docker compose --env-file .env.example config --quiet
+
+db-up:
+	docker compose --env-file .env.example up -d --wait database
+
+db-migrate:
+	uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head
+
+db-check:
+	uv run --project apps/api alembic -c apps/api/alembic.ini check
+
+db-down:
+	docker compose --env-file .env.example down
