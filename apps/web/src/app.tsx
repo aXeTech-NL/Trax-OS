@@ -1,3 +1,4 @@
+import { AuthProvider, useAuth } from "./auth/auth";
 import { AppShell } from "./components/app-shell";
 import {
   JourneyDataProvider,
@@ -16,6 +17,7 @@ import {
   DataSettingsPage,
   NotFoundPage,
 } from "./pages/static-pages";
+import type { AuthRepository } from "./repositories/auth-repository";
 import type { InstanceRepository } from "./repositories/instance-repository";
 import type { JourneyRepository } from "./repositories/journey-repository";
 import { parseRoute } from "./routes";
@@ -24,15 +26,41 @@ import { usePathname } from "./use-pathname";
 interface AppProps {
   readonly repository: InstanceRepository;
   readonly journeyRepository: JourneyRepository;
+  readonly authRepository: AuthRepository;
 }
 
-export function App({ repository, journeyRepository }: AppProps) {
+export function App({
+  repository,
+  journeyRepository,
+  authRepository,
+}: AppProps) {
   return (
     <I18nProvider repository={journeyRepository}>
-      <JourneyDataProvider repository={journeyRepository}>
-        <Application repository={repository} />
-      </JourneyDataProvider>
+      <AuthProvider repository={authRepository}>
+        <AuthenticatedApplication
+          repository={repository}
+          journeyRepository={journeyRepository}
+        />
+      </AuthProvider>
     </I18nProvider>
+  );
+}
+
+function AuthenticatedApplication({
+  repository,
+  journeyRepository,
+}: {
+  readonly repository: InstanceRepository;
+  readonly journeyRepository: JourneyRepository;
+}) {
+  const auth = useAuth();
+  return (
+    <JourneyDataProvider
+      repository={journeyRepository}
+      onAuthenticationRequired={auth.anonymous}
+    >
+      <Application repository={repository} />
+    </JourneyDataProvider>
   );
 }
 
@@ -45,6 +73,7 @@ function Application({
   const route = parseRoute(pathname);
   const { data, status, storageError, retry } = useJourneyData();
   const { t } = useI18n();
+  const auth = useAuth();
   const journeyId = "journeyId" in route ? route.journeyId : undefined;
   const journey = journeyId
     ? data.journeys.find((candidate) => candidate.id === journeyId)
@@ -102,7 +131,12 @@ function Application({
   }
 
   return (
-    <AppShell route={route} journey={journey}>
+    <AppShell
+      route={route}
+      journey={journey}
+      user={auth.state.status === "authenticated" ? auth.state.user : undefined}
+      onLogout={() => void auth.logout()}
+    >
       {storageError && (
         <div className="global-alert" role="alert">
           {t("status.storageError")}

@@ -169,6 +169,42 @@ progress {
 .skip-link:focus {
   transform: translateY(0);
 }
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  padding: 1.5rem;
+  place-items: center;
+  background: radial-gradient(
+    circle at 80% 10%,
+    rgb(21 153 168 / 16%),
+    transparent 35rem
+  );
+}
+.auth-card {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 1rem;
+  padding: clamp(1.5rem, 5vw, 3rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.auth-card h1 {
+  font-size: clamp(2rem, 7vw, 3.5rem);
+}
+.account-summary {
+  display: grid;
+  gap: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.account-summary span {
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+.sidebar-footer button {
+  width: 100%;
+}
 .app-layout {
   min-height: 100vh;
 }

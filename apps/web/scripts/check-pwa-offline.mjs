@@ -69,17 +69,22 @@ try {
   client.close();
   if (
     result.title !== "Trax OS · Journeys" ||
-    result.heading !== "Create a journey" ||
+    result.heading !== "Server unavailable" ||
     result.controlled !== true
   ) {
     throw new Error(`Offline PWA assertion failed: ${JSON.stringify(result)}`);
   }
   console.log(
-    `Offline PWA navigation passed: ${result.heading}, service worker controlled`,
+    `Offline PWA reconnect shell passed: ${result.heading}, service worker controlled`,
   );
 } finally {
   for (const child of children.reverse()) child.kill("SIGTERM");
-  await rm(profile, { recursive: true, force: true });
+  await rm(profile, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  });
 }
 
 function start(command, args, options = {}) {

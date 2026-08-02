@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vitest/config";
 
+const apiTarget = process.env.TRAX_API_PROXY ?? "http://127.0.0.1:18000";
+
 export default defineConfig({
   plugins: [
     react(),
@@ -11,7 +13,7 @@ export default defineConfig({
       manifest: {
         name: "Trax OS",
         short_name: "Trax OS",
-        description: "Local-first journey planning",
+        description: "Authenticated self-hosted journey planning",
         theme_color: "#14866d",
         background_color: "#f8fbfc",
         display: "standalone",
@@ -36,8 +38,8 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:18000",
-      "/health": "http://127.0.0.1:18000",
+      "/api": apiTarget,
+      "/health": apiTarget,
     },
   },
   test: {

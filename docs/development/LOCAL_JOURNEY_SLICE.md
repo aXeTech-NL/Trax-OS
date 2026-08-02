@@ -1,14 +1,16 @@
-# Local Journey web slice
+# Local Journey web prototype
 
-**Status:** Implemented provisional web slice
+**Status:** Superseded UI/persistence prototype; not a supported web mode
 
-**Authority:** Browser-local only
+**Authority:** Prototype evidence only; authenticated PostgreSQL is authoritative for web
 
-**Schema:** `trax-os-local`, IndexedDB version 1
+**Prototype schema:** `trax-os-local`, IndexedDB version 1
 
 ## Product outcome
 
-A user can work manually in English or Dutch to:
+This prototype demonstrated reusable Journey UI/domain seams. Authoritative browser-local operation was subsequently rejected because clearing site data predictably destroys it. The supported web product uses the authenticated server baseline in [`SERVER_BACKED_WEB.md`](SERVER_BACKED_WEB.md).
+
+The prototype allowed a user to:
 
 - create, edit, archive, restore and delete a generic Journey;
 - use the same model for one or many stops, countries and activities;
@@ -22,16 +24,9 @@ A user can work manually in English or Dutch to:
 
 The Journey library and workflows do not call the API. Public instance discovery remains on About and cannot block local planning.
 
-## Runtime boundaries
+## Runtime boundary after the decision
 
-Feature components depend on `JourneyRepository`. Production composition injects `IndexedDbJourneyRepository`; tests inject `InMemoryJourneyRepository`. A single read/write transaction replaces the Journey, segment and packing stores together. Journey deletion removes its related records in the same commit.
-
-IndexedDB object stores:
-
-- `journeys`;
-- `segments`, indexed by `journeyId`;
-- `packing`, indexed by `journeyId`;
-- `preferences` for locale.
+Feature components still depend on `JourneyRepository`, so the useful UI/domain work was retained. Production composition now injects `HttpJourneyRepository`; only tests inject `InMemoryJourneyRepository`. IndexedDB Journey authority and browser backup code were removed. Locale preference may remain disposable browser-local state.
 
 Persisted domain values remain language-neutral. Dates are local ISO `YYYY-MM-DD` values and are formatted only at the UI boundary.
 
@@ -39,7 +34,7 @@ Persisted domain values remain language-neutral. Dates are local ISO `YYYY-MM-DD
 
 The Vite production build emits a revisioned Workbox service worker and navigation fallback. `/api` and `/health` navigations are excluded from fallback and no runtime API cache is configured. The app shell can reopen only after a successful first load/service-worker installation.
 
-Network availability and browser-local saving are separate states. An available network does not mean Journey data is synchronized.
+The shell can render an honest reconnect state offline. Authorised Journey reads and every mutation require the self-hosted server; the service worker never caches API responses.
 
 ## Explicit limitations
 
@@ -72,9 +67,9 @@ Unknown paths and IDs return a privacy-neutral localized not-found state.
 ## Acceptance evidence
 
 - Typed domain/service tests cover date validation, segment ordering, cascade deletion and packing bounds.
-- IndexedDB adapter test proves persistence across repository instances, locale storage and rejection without data loss.
-- Backup tests prove versioned round trips and reject unsupported or orphaned records before replacement.
-- App integration tests cover onboarding, Journey creation, stay creation, packing/checking, Dutch switching, API isolation/failure and unknown IDs.
-- Existing API and generated contract boundaries remain unchanged.
+- Auth tests cover anonymous bootstrap, registration, session restoration, CSRF logout and no Journey load before authentication.
+- HTTP adapter tests cover canonical mapping, CSRF mutation and server reload after browser preferences are cleared.
+- App integration tests cover onboarding, Journey creation, stay creation, packing/checking, Dutch switching, API failure and unknown IDs.
+- Generated API contracts cover authenticated server authority.
 
 The later canonical local-only runtime must provide reviewed encryption, export/import, command/change semantics and safe self-hosted pairing before this slice can be described as the secure V1 offline authority.

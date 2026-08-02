@@ -13,6 +13,7 @@ export interface Journey {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly status: JourneyStatus;
+  readonly recordVersion: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -25,6 +26,9 @@ interface SegmentBase {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly notes: string;
+  readonly recordVersion: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 export interface StaySegment extends SegmentBase {
@@ -49,6 +53,9 @@ export interface PackingItem {
   readonly quantity: number;
   readonly packedQuantity: number;
   readonly essential: boolean;
+  readonly recordVersion: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 export interface JourneyData {
@@ -213,6 +220,7 @@ export function parseJourneyData(value: unknown): JourneyData {
       (journey.startDate &&
         journey.endDate &&
         journey.endDate < journey.startDate) ||
+      !positiveVersion(journey.recordVersion) ||
       !isoTimestamp(journey.createdAt) ||
       !isoTimestamp(journey.updatedAt)
     ) {
@@ -237,7 +245,10 @@ export function parseJourneyData(value: unknown): JourneyData {
       (segment.startDate &&
         segment.endDate &&
         segment.endDate < segment.startDate) ||
-      typeof segment.notes !== "string"
+      typeof segment.notes !== "string" ||
+      !positiveVersion(segment.recordVersion) ||
+      !isoTimestamp(segment.createdAt) ||
+      !isoTimestamp(segment.updatedAt)
     ) {
       invalidLocalData();
     }
@@ -278,7 +289,10 @@ export function parseJourneyData(value: unknown): JourneyData {
       (item.quantity as number) > 99 ||
       (item.packedQuantity as number) < 0 ||
       (item.packedQuantity as number) > (item.quantity as number) ||
-      typeof item.essential !== "boolean"
+      typeof item.essential !== "boolean" ||
+      !positiveVersion(item.recordVersion) ||
+      !isoTimestamp(item.createdAt) ||
+      !isoTimestamp(item.updatedAt)
     ) {
       invalidLocalData();
     }
@@ -300,6 +314,10 @@ function nullableDate(value: unknown): value is string | null {
   return (
     value === null || (typeof value === "string" && LOCAL_DATE.test(value))
   );
+}
+
+function positiveVersion(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 1;
 }
 
 function isoTimestamp(value: unknown): value is string {

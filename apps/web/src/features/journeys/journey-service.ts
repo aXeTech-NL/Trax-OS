@@ -50,6 +50,7 @@ export function createJourney(
     startDate: input.startDate || null,
     endDate: input.endDate || null,
     status: "planning",
+    recordVersion: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -135,6 +136,7 @@ export function saveSegment(
   if (segmentId && !existing) throw new JourneyOperationError("item_not_found");
   const position =
     existing?.position ?? segmentsForJourney(data, journeyId).length;
+  const timestamp = runtime.now();
   const common = {
     id: existing?.id ?? runtime.id(),
     journeyId,
@@ -142,6 +144,9 @@ export function saveSegment(
     startDate: input.startDate || null,
     endDate: input.endDate || null,
     notes: input.notes.trim(),
+    recordVersion: existing?.recordVersion ?? 1,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
   };
   const segment: JourneySegment =
     input.kind === "stay"
@@ -250,6 +255,9 @@ export function savePackingItem(
     quantity: input.quantity,
     packedQuantity: Math.min(existing?.packedQuantity ?? 0, input.quantity),
     essential: input.essential,
+    recordVersion: existing?.recordVersion ?? 1,
+    createdAt: existing?.createdAt ?? runtime.now(),
+    updatedAt: runtime.now(),
   };
   const packingItems = existing
     ? data.packingItems.map((current) =>

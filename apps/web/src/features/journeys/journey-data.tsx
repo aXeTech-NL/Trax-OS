@@ -8,7 +8,10 @@ import {
   useState,
 } from "react";
 
-import type { JourneyRepository } from "../../repositories/journey-repository";
+import {
+  RepositoryError,
+  type JourneyRepository,
+} from "../../repositories/journey-repository";
 import { EMPTY_JOURNEY_DATA, type JourneyData } from "./domain";
 
 interface JourneyDataValue {
@@ -23,9 +26,11 @@ const JourneyDataContext = createContext<JourneyDataValue | null>(null);
 
 export function JourneyDataProvider({
   repository,
+  onAuthenticationRequired,
   children,
 }: {
   readonly repository: JourneyRepository;
+  readonly onAuthenticationRequired?: () => void;
   readonly children: ReactNode;
 }) {
   const [data, setData] = useState<JourneyData>(EMPTY_JOURNEY_DATA);
@@ -43,28 +48,41 @@ export function JourneyDataProvider({
         setData(stored);
         setStatus("ready");
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!active) return;
+        if (
+          error instanceof RepositoryError &&
+          error.code === "authentication_required"
+        ) {
+          onAuthenticationRequired?.();
+          return;
+        }
         setStatus("error");
       });
     return () => {
       active = false;
     };
-  }, [repository, attempt]);
+  }, [repository, attempt, onAuthenticationRequired]);
 
   const commit = useCallback(
     async (next: JourneyData) => {
       try {
-        await repository.save(next);
-        setData(next);
+        const persisted = await repository.save(next);
+        setData(persisted);
         setStorageError(false);
         return true;
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof RepositoryError &&
+          error.code === "authentication_required"
+        ) {
+          onAuthenticationRequired?.();
+        }
         setStorageError(true);
         return false;
       }
     },
-    [repository],
+    [repository, onAuthenticationRequired],
   );
 
   const value = useMemo(

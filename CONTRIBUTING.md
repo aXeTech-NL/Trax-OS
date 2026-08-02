@@ -23,10 +23,13 @@ Use Node.js 22/npm 10, Python 3.12 and uv 0.12. The checked-in npm and uv lockfi
 ```bash
 make bootstrap       # npm ci, then uv sync --locked
 make generate        # update canonical generated contracts
-make check           # contract, format, lint, type and test gates
-make test            # focused test suites only
-make dev             # install dependencies, then start API :18000 and web :5173
-make compose-config  # validate the development database configuration
+make db-up            # start the PostgreSQL/PostGIS development service
+make db-migrate       # apply explicit Alembic migrations
+make db-check         # detect migration/metadata drift
+make check            # contract, format, lint, type and test gates
+make test             # focused test suites only
+make dev              # install dependencies, then start API :18000 and web :5173
+make compose-config   # validate the development database configuration
 ```
 
 Run `make generate` after changing a public FastAPI response. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails when they drift. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
@@ -41,6 +44,16 @@ npm workspaces and Pydantic/OpenAPI-first generation are provisional v0.1 choice
 4. Run formatting, linting, type checks and tests locally.
 5. Submit a pull request with a clear explanation of the change.
 6. Respond to review comments.
+
+## Pi issue worktrees
+
+Trusted project sessions discover [`.pi/prompts/gh-issue.md`](.pi/prompts/gh-issue.md) as `/gh-issue`. Restart Pi after first pulling the template, then run for example:
+
+```text
+/gh-issue #18
+```
+
+The prompt reads the complete issue and dependencies, creates an isolated sibling worktree/branch from current `origin/main`, implements and validates one vertical slice, pushes only that issue branch and opens a PR linked with `Closes #18`. It never merges automatically. Use one Pi session per issue/worktree and select only parallel-safe issues from the pinned [master backlog #68](https://github.com/aXeTech-NL/Trax-OS/issues/68).
 
 ## Branch names
 

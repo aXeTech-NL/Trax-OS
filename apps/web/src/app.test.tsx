@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 
+import { InMemoryAuthRepository } from "./adapters/in-memory-auth-repository";
 import { InMemoryJourneyRepository } from "./adapters/in-memory-journey-repository";
 import { App } from "./app";
 import type { JourneyData } from "./features/journeys/domain";
@@ -32,18 +33,58 @@ function renderApp(
       <App
         repository={{ getInstance }}
         journeyRepository={journeyRepository}
+        authRepository={new InMemoryAuthRepository()}
       />,
     ),
   };
 }
 
-test("starts with an honest local Journey onboarding without calling the API", async () => {
+test("requires authentication before loading Journeys and supports register/logout", async () => {
+  const user = userEvent.setup();
+  const authRepository = new InMemoryAuthRepository(null);
+  const journeyRepository = new InMemoryJourneyRepository(undefined, "en");
+  const load = vi.spyOn(journeyRepository, "load");
+  window.history.replaceState(null, "", "/");
+  render(
+    <App
+      repository={{ getInstance: vi.fn().mockResolvedValue(instance) }}
+      journeyRepository={journeyRepository}
+      authRepository={authRepository}
+    />,
+  );
+
+  expect(
+    await screen.findByRole("heading", { name: "Sign in to Trax OS" }),
+  ).toBeInTheDocument();
+  expect(load).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: /Create an account/ }));
+  await user.type(screen.getByLabelText("Display name"), "Maurice");
+  await user.type(
+    screen.getByLabelText("Email address"),
+    "maurice@example.com",
+  );
+  await user.type(
+    screen.getByLabelText("Password"),
+    "correct horse battery staple",
+  );
+  await user.click(screen.getByRole("button", { name: "Create account" }));
+  expect(
+    await screen.findByRole("heading", { name: "Plan your first journey" }),
+  ).toBeInTheDocument();
+  expect(load).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(
+    await screen.findByRole("heading", { name: "Sign in to Trax OS" }),
+  ).toBeInTheDocument();
+});
+
+test("starts with authenticated server Journey onboarding without calling instance discovery", async () => {
   const { getInstance } = renderApp();
 
   expect(
     await screen.findByRole("heading", { name: "Plan your first journey" }),
   ).toBeInTheDocument();
-  expect(screen.getByText("Local-only")).toBeInTheDocument();
+  expect(screen.getByText("Server-backed")).toBeInTheDocument();
   expect(getInstance).not.toHaveBeenCalled();
 });
 
@@ -105,7 +146,7 @@ test("keeps instance discovery isolated to About and reports API failure", async
     "Instance unavailable",
   );
   expect(
-    screen.getByText(/Local journeys continue to work/),
+    screen.getByText(/Reconnect before loading or changing Journey data/),
   ).toBeInTheDocument();
   expect(getInstance).toHaveBeenCalledTimes(1);
 });

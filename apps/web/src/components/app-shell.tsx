@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { Journey } from "../features/journeys/domain";
+import type { AuthUser } from "../repositories/auth-repository";
 import { useOnlineStatus } from "../hooks/use-online-status";
 import { useI18n } from "../i18n/i18n";
 import type { AppRoute } from "../routes";
@@ -10,10 +11,14 @@ import { AppLink } from "./app-link";
 export function AppShell({
   route,
   journey,
+  user,
+  onLogout,
   children,
 }: {
   readonly route: AppRoute;
   readonly journey?: Journey;
+  readonly user?: AuthUser;
+  readonly onLogout: () => void;
   readonly children: ReactNode;
 }) {
   const { locale, setLocale, t } = useI18n();
@@ -100,6 +105,15 @@ export function AppShell({
             <option value="en">{t("locale.en")}</option>
             <option value="nl">{t("locale.nl")}</option>
           </select>
+          {user && (
+            <div className="account-summary">
+              <strong>{user.displayName}</strong>
+              <span>{user.email}</span>
+            </div>
+          )}
+          <button className="secondary" type="button" onClick={onLogout}>
+            {t("auth.logout")}
+          </button>
           <p className="network-state" data-online={online}>
             <span aria-hidden="true">{online ? "●" : "○"}</span>
             {online ? t("status.online") : t("status.offline")}
@@ -117,7 +131,7 @@ export function AppShell({
           </span>
           <span>TRAX OS</span>
         </AppLink>
-        <span className="local-chip">{t("common.localOnly")}</span>
+        <span className="local-chip">{t("common.serverBacked")}</span>
       </header>
       <main id="main-content" className="app-content">
         {children}

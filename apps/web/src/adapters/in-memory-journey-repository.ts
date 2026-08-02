@@ -21,9 +21,9 @@ export class InMemoryJourneyRepository implements JourneyRepository {
     return Promise.resolve(structuredClone(this.data));
   }
 
-  save(data: JourneyData): Promise<void> {
+  save(data: JourneyData): Promise<JourneyData> {
     this.data = structuredClone(data);
-    return Promise.resolve();
+    return Promise.resolve(structuredClone(this.data));
   }
 
   loadLocale(): Promise<Locale | null> {
