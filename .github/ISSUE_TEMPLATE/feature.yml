@@ -1,0 +1,53 @@
+name: Feature proposal
+description: Propose a focused product or platform capability
+title: "feature: "
+labels: [enhancement, triage]
+body:
+  - type: input
+    id: capability
+    attributes:
+      label: Capability or phase ID
+      description: Use the traceability ID when one exists.
+      placeholder: P1-04, P2-03, or new
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem and outcome
+      description: Describe the observed problem before proposing implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope and non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: State the behaviour, tests or user flow that would prove the outcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Architecture impact
+      options:
+        - No public contract or trust-boundary change
+        - Public API/command/query contract
+        - Persistence or migration
+        - Security/privacy/access
+        - Offline/sync/device
+        - Provider/MCP/Atlas
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: considerations
+    attributes:
+      label: Security, privacy, offline and self-hosting considerations
+    validations:
+      required: true

@@ -1,15 +1,24 @@
-name: Foundation checks
+name: Foundation CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  check:
-    runs-on: ubuntu-24.04
+  foundation:
+    name: Foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,9 +34,13 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: make bootstrap
-      - name: Run foundation checks
+      - name: Run foundation checks and production build
         run: make check
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
       - name: Validate development Compose configuration
         run: make compose-config
-      - name: Check whitespace
-        run: git diff --check
+      - name: Verify generated files and formatting leave no diff
+        run: |
+          git diff --check
+          git diff --exit-code
