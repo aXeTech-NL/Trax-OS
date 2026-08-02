@@ -1,4 +1,4 @@
-.PHONY: bootstrap generate contract-check api-check web-check test check dev compose-config db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check threat-model-check api-check web-check test check dev compose-config db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -9,6 +9,9 @@ generate:
 
 contract-check:
 	npm run contract:check
+
+threat-model-check:
+	npm run security:check
 
 api-check:
 	uv run --project apps/api ruff format --check apps/api
@@ -22,7 +25,7 @@ test:
 	uv run --project apps/api pytest apps/api/tests
 	npm run test --workspace @trax-os/web
 
-check: contract-check api-check web-check test
+check: contract-check threat-model-check api-check web-check test
 
 dev:
 	npm run dev

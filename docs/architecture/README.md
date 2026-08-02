@@ -13,6 +13,8 @@ Trax OS is an agentic, offline-first travel operating system with a shared comma
 - [Retention and Deletion](RETENTION_AND_DELETION.md) — V1 retention, cancellation/export and purge defaults.
 - [Provider and Source Registry](../integrations/SOURCE_REGISTRY.md) — controlled V1 provider and authoritative-domain baseline.
 
+The cross-cutting [Phase 0 Threat Model](../security/PHASE_0_THREAT_MODEL.md) traces these canonical boundaries to threats, controls, owners, verification and residual risks. It is a security companion, not an alternative source of product or architecture authority.
+
 ## Authority and language
 
 Repository documentation is English-first. The English documents in this directory are authoritative for implementation and review.
