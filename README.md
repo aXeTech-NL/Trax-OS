@@ -10,7 +10,24 @@ Official clients are intended to work with either a self-hosted Trax OS server o
 
 Trax OS was initiated by Marcel Marinus Bijl, trading as aXeTech, a sole proprietorship registered with the Dutch Chamber of Commerce (KVK). It is intended to grow as an open community project rather than a closed, vendor-controlled product.
 
-> **Project status:** Trax OS is in its initial development phase. Application code, self-hosting instructions and release artefacts will be added as the project develops.
+> **Project status:** Version 0.1.0 is an executable development foundation. It provides public instance discovery, health checks, generated API contracts and a web shell; travel domains, identity, persistence integration and deployment remain intentionally unimplemented.
+
+## Develop the v0.1 foundation
+
+Prerequisites: Node.js 22, npm 10, Python 3.12 and [uv 0.12](https://docs.astral.sh/uv/). Docker Compose is optional and only needed for the PostgreSQL/PostGIS development service.
+
+```bash
+make bootstrap       # clean installs from package-lock.json and uv.lock
+make generate        # regenerate OpenAPI and TypeScript contracts
+make check           # contract drift, formatting, lint, types and focused tests
+make test            # focused API and web tests
+make dev             # API :8000 and web :5173
+make compose-config  # validate compose.yaml without starting services
+```
+
+The API exposes `GET /health/live`, `GET /health/ready`, `GET /api/v1/version` and `GET /api/v1/capabilities`. During `make dev`, Vite proxies `/api` and `/health` to the API.
+
+npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment. The root Make interface keeps common workflows stable. Pydantic/OpenAPI-first generation is likewise a provisional v0.1 contract foundation rather than a final architecture decision. See [Foundation development](docs/development/FOUNDATION.md).
 
 ## What Trax OS aims to provide
 

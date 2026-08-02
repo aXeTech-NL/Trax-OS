@@ -1,0 +1,28 @@
+# JavaScript
+node_modules/
+apps/web/dist/
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and runtime data
+.env
+!.env.example
+*.local
+postgres-data/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent tooling
+.pi-subagents/

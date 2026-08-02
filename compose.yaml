@@ -1,0 +1,24 @@
+name: trax-os-foundation
+
+services:
+  database:
+    image: postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trax}
+      POSTGRES_USER: ${POSTGRES_USER:-trax}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trax-development-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:

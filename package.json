@@ -1,0 +1,24 @@
+{
+  "name": "trax-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trax OS public foundation",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "apps/web",
+    "packages/api-contract"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"uv run --project apps/api uvicorn trax_api.main:app --reload --port 8000\" \"npm run dev --workspace @trax-os/web\"",
+    "generate": "node scripts/contracts.mjs generate",
+    "contract:check": "node scripts/contracts.mjs check"
+  },
+  "devDependencies": {
+    "concurrently": "9.1.2",
+    "openapi-typescript": "7.8.0"
+  },
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10 <11"
+  }
+}

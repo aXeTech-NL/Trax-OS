@@ -1,0 +1,17 @@
+{
+  "name": "@trax-os/api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "generated/schema.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/schema.ts"
+    },
+    "./openapi.json": "./generated/openapi.json"
+  },
+  "files": [
+    "generated"
+  ],
+  "license": "Apache-2.0"
+}
