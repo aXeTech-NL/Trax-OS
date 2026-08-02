@@ -250,7 +250,7 @@ progress {
   display: none;
 }
 .app-content {
-  width: min(1180px, calc(100% - 250px));
+  width: calc(100% - 250px);
   min-height: 100vh;
   margin-left: 250px;
   padding: clamp(2rem, 5vw, 4.5rem);
