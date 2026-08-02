@@ -36,6 +36,8 @@ jobs:
         run: make bootstrap
       - name: Run foundation checks and production build
         run: make check
+      - name: Prove production PWA navigation works offline
+        run: npm run test:pwa --workspace @trax-os/web
       - name: Audit npm dependencies
         run: npm audit --audit-level=high
       - name: Validate development Compose configuration

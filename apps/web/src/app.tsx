@@ -1,95 +1,114 @@
-import { AppLink } from "./components/app-link";
-import { InstanceStatus } from "./components/instance-status";
+import { AppShell } from "./components/app-shell";
+import {
+  JourneyDataProvider,
+  useJourneyData,
+} from "./features/journeys/journey-data";
+import {
+  JourneyEditorPage,
+  JourneyLibraryPage,
+  JourneyOverviewPage,
+} from "./features/journeys/journey-pages";
+import { PackingPage } from "./features/journeys/packing-page";
+import { TimelinePage } from "./features/journeys/timeline-page";
+import { I18nProvider, useI18n } from "./i18n/i18n";
+import {
+  AboutPage,
+  DataSettingsPage,
+  NotFoundPage,
+} from "./pages/static-pages";
 import type { InstanceRepository } from "./repositories/instance-repository";
+import type { JourneyRepository } from "./repositories/journey-repository";
+import { parseRoute } from "./routes";
 import { usePathname } from "./use-pathname";
 
 interface AppProps {
   readonly repository: InstanceRepository;
+  readonly journeyRepository: JourneyRepository;
 }
 
-export function App({ repository }: AppProps) {
-  const pathname = usePathname();
-
+export function App({ repository, journeyRepository }: AppProps) {
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to content
-      </a>
-      <header className="site-header">
-        <AppLink className="brand" to="/" ariaLabel="Trax OS home">
-          <span className="brand-mark" aria-hidden="true">
-            X
-          </span>
-          <span>TRAX OS</span>
-        </AppLink>
-        <nav aria-label="Primary navigation">
-          <AppLink
-            className={pathname === "/" ? "active" : undefined}
-            to="/"
-            ariaCurrent={pathname === "/" ? "page" : undefined}
-          >
-            Foundation
-          </AppLink>
-          <AppLink
-            className={pathname === "/about" ? "active" : undefined}
-            to="/about"
-            ariaCurrent={pathname === "/about" ? "page" : undefined}
-          >
-            About
-          </AppLink>
-        </nav>
-      </header>
-      <main id="main-content">
-        {pathname === "/" ? (
-          <FoundationPage repository={repository} />
-        ) : pathname === "/about" ? (
-          <AboutPage />
+    <I18nProvider repository={journeyRepository}>
+      <JourneyDataProvider repository={journeyRepository}>
+        <Application repository={repository} />
+      </JourneyDataProvider>
+    </I18nProvider>
+  );
+}
+
+function Application({
+  repository,
+}: {
+  readonly repository: InstanceRepository;
+}) {
+  const pathname = usePathname();
+  const route = parseRoute(pathname);
+  const { data, status, storageError, retry } = useJourneyData();
+  const { t } = useI18n();
+  const journeyId = "journeyId" in route ? route.journeyId : undefined;
+  const journey = journeyId
+    ? data.journeys.find((candidate) => candidate.id === journeyId)
+    : undefined;
+
+  let page;
+  if (status === "loading") {
+    page = (
+      <section className="empty-state" aria-live="polite" aria-busy="true">
+        <div className="status-dot status-dot--loading" aria-hidden="true" />
+        <h1>{t("common.loading")}</h1>
+      </section>
+    );
+  } else if (status === "error") {
+    page = (
+      <section className="empty-state" role="alert">
+        <h1>{t("status.storageError")}</h1>
+        <button type="button" onClick={retry}>
+          {t("common.retry")}
+        </button>
+      </section>
+    );
+  } else if (journeyId && !journey) {
+    page = <NotFoundPage />;
+  } else {
+    switch (route.name) {
+      case "journeys":
+        page = <JourneyLibraryPage />;
+        break;
+      case "journey-new":
+        page = <JourneyEditorPage />;
+        break;
+      case "journey":
+        page = journey ? (
+          <JourneyOverviewPage journey={journey} />
         ) : (
           <NotFoundPage />
-        )}
-      </main>
-    </div>
-  );
-}
+        );
+        break;
+      case "timeline":
+        page = journey ? <TimelinePage journey={journey} /> : <NotFoundPage />;
+        break;
+      case "packing":
+        page = journey ? <PackingPage journey={journey} /> : <NotFoundPage />;
+        break;
+      case "settings":
+        page = <DataSettingsPage />;
+        break;
+      case "about":
+        page = <AboutPage repository={repository} />;
+        break;
+      default:
+        page = <NotFoundPage />;
+    }
+  }
 
-function FoundationPage({ repository }: AppProps) {
   return (
-    <div className="page-grid">
-      <section className="hero" aria-labelledby="foundation-title">
-        <p className="eyebrow">Public foundation · v0.1</p>
-        <h1 id="foundation-title">
-          Your Travel OS starts with an open contract.
-        </h1>
-        <p className="hero-copy">
-          This executable foundation connects a URL-routed web client to the
-          typed public Trax OS API. Journey features remain intentionally
-          deferred until their boundaries are decided.
-        </p>
-      </section>
-      <InstanceStatus repository={repository} />
-    </div>
-  );
-}
-
-function AboutPage() {
-  return (
-    <article className="content-page">
-      <p className="eyebrow">About this build</p>
-      <h1>Small, public and reproducible</h1>
-      <p>
-        Trax OS v0.1 establishes health, version and capability discovery
-        without inventing domain, identity or persistence behaviour.
-      </p>
-    </article>
-  );
-}
-
-function NotFoundPage() {
-  return (
-    <article className="content-page">
-      <p className="eyebrow">404</p>
-      <h1>Page not found</h1>
-      <AppLink to="/">Return to the foundation</AppLink>
-    </article>
+    <AppShell route={route} journey={journey}>
+      {storageError && (
+        <div className="global-alert" role="alert">
+          {t("status.storageError")}
+        </div>
+      )}
+      {page}
+    </AppShell>
   );
 }

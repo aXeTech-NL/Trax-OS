@@ -1,7 +1,7 @@
 # v0.1 development foundation
 
 **Version:** 0.1.0
-**Status:** executable foundation, not a production deployment
+**Status:** executable foundation extended by a provisional local Journey web slice; not a production deployment
 
 ## Repository boundaries
 
@@ -12,7 +12,7 @@ The v0.1 implementation contains only components with executable or checkable va
 - `packages/api-contract`: reviewed generated OpenAPI and TypeScript contracts;
 - `compose.yaml`: PostgreSQL/PostGIS development dependency only.
 
-No domain tables, migrations, identity/access implementation, synchronisation runtime, document cryptography, Atlas/MCP business flows, mobile/desktop placeholders or deployment configuration are implied by this foundation.
+No server domain tables, migrations, identity/access implementation, synchronisation runtime, document cryptography, Atlas/MCP business flows, mobile/desktop placeholders or deployment configuration are implied by this foundation. The browser-only Journey domain and IndexedDB adapter are separately bounded in [`LOCAL_JOURNEY_SLICE.md`](LOCAL_JOURNEY_SLICE.md).
 
 ## Provisional tool choices
 
@@ -33,7 +33,7 @@ The API exposes:
 
 Every response passes through request-ID middleware. A syntactically safe incoming `X-Request-ID` is preserved; otherwise a new opaque ID is returned. Expected and unexpected failures use the stable `error.code`, `error.message`, `error.details` and `error.request_id` envelope. The generic handler does not expose exception detail.
 
-The web application obtains version and capability data through `InstanceRepository`. Only `HttpInstanceRepository` may use `fetch`; ESLint enforces this boundary for feature code. Components render distinct loading, error and success states. Foundation and About routes are URL-addressable.
+The web application obtains version and capability data through `InstanceRepository` only on About. Journey features use an injected `JourneyRepository` and never call the API. Only `HttpInstanceRepository` may use `fetch`; ESLint enforces this boundary for feature code. Components render distinct loading, error and success states, and all Journey routes are URL-addressable.
 
 ## Database baseline
 
@@ -54,4 +54,4 @@ docker compose up -d database
 
 ## Deferred decisions
 
-After v0.1, explicit approval is still required for production/deployment shape, domain and persistence schemas, identity and access, offline/PowerSync integration, local-only runtimes, document cryptography, Atlas/MCP business flows, and contract/workspace choices that need an ADR.
+Explicit approval is still required for production/deployment shape, server domain and persistence schemas, identity and access, PowerSync integration, document cryptography, Atlas/MCP business flows, and contract/workspace choices that need an ADR. The owner approved a fully functional standalone core and this provisional browser implementation; the canonical encrypted local runtime, command/change authority, export/import and self-hosted pairing semantics remain an ADR requirement.

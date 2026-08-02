@@ -5,7 +5,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "eslint.config.js"] },
+  { ignores: ["dist", "eslint.config.js", "scripts"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
@@ -37,5 +37,9 @@ export default tseslint.config(
   {
     files: ["src/adapters/http-instance-repository.ts"],
     rules: { "no-restricted-globals": "off" },
+  },
+  {
+    files: ["src/i18n/i18n.tsx", "src/features/journeys/journey-data.tsx"],
+    rules: { "react-refresh/only-export-components": "off" },
   },
 );

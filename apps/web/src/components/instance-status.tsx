@@ -1,4 +1,5 @@
 import { useInstance } from "../hooks/use-instance";
+import { useI18n } from "../i18n/i18n";
 import type { InstanceRepository } from "../repositories/instance-repository";
 
 interface InstanceStatusProps {
@@ -7,58 +8,56 @@ interface InstanceStatusProps {
 
 export function InstanceStatus({ repository }: InstanceStatusProps) {
   const { state, retry } = useInstance(repository);
+  const { t } = useI18n();
 
   if (state.status === "loading") {
     return (
-      <section className="status-card" aria-live="polite" aria-busy="true">
+      <div className="status-card" aria-live="polite" aria-busy="true">
         <span className="status-dot status-dot--loading" aria-hidden="true" />
         <div>
-          <h2>Connecting to this instance</h2>
-          <p>Reading its public version and capabilities…</p>
+          <h3>{t("instance.connecting")}</h3>
+          <p>{t("instance.reading")}</p>
         </div>
-      </section>
+      </div>
     );
   }
 
   if (state.status === "error") {
     return (
-      <section className="status-card status-card--error" role="alert">
+      <div className="status-card status-card--error" role="alert">
         <span className="status-dot status-dot--error" aria-hidden="true" />
         <div>
-          <h2>Instance unavailable</h2>
-          <p>
-            The public API could not be reached. Check that the API development
-            server is running.
-          </p>
+          <h3>{t("instance.unavailable")}</h3>
+          <p>{t("instance.unavailableText")}</p>
           <button type="button" onClick={retry}>
-            Try again
+            {t("common.retry")}
           </button>
         </div>
-      </section>
+      </div>
     );
   }
 
   return (
-    <section className="status-card status-card--success" aria-live="polite">
+    <div className="status-card status-card--success" aria-live="polite">
       <span className="status-dot status-dot--success" aria-hidden="true" />
       <div>
-        <p className="eyebrow">Instance connected</p>
-        <h2>{state.instance.application}</h2>
+        <p className="eyebrow">{t("instance.connected")}</p>
+        <h3>{state.instance.application}</h3>
         <dl className="instance-details">
           <div>
-            <dt>Version</dt>
+            <dt>{t("instance.version")}</dt>
             <dd>{state.instance.version}</dd>
           </div>
           <div>
-            <dt>API contract</dt>
+            <dt>{t("instance.api")}</dt>
             <dd>v{state.instance.apiVersion}</dd>
           </div>
           <div>
-            <dt>Capabilities</dt>
+            <dt>{t("instance.capabilities")}</dt>
             <dd>{state.instance.capabilities.length}</dd>
           </div>
         </dl>
       </div>
-    </section>
+    </div>
   );
 }
