@@ -16,6 +16,11 @@ All product and platform documentation is organised under this directory. Reposi
 - [Retention and Deletion](architecture/RETENTION_AND_DELETION.md)
 - [Provider and Authoritative Source Registry](integrations/SOURCE_REGISTRY.md)
 
+### Security
+
+- [Security design documentation](security/README.md)
+- [Phase 0 Threat Model](security/PHASE_0_THREAT_MODEL.md)
+
 ### Product
 
 - [Product documentation](product/README.md)
