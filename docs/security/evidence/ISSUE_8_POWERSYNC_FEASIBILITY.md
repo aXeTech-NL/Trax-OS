@@ -69,13 +69,13 @@ The retained structured observation records one passed integration subtest, zero
 
 Older candidate attempts may remain under separate ignored run IDs, but they are not cited or used as evidence. The selected run above is the only run supporting the M2 commit-bound exact observations, and no failed run counts as success evidence.
 
-### 3.1 Latest M3a mutable candidate execution
+### 3.1 Latest M3a commit-bound candidate execution
 
-This subsection does **not** rewrite or promote the prior commit-bound M2 evidence. The following newer run exercised the uncommitted M3a candidate and therefore remains `executed-uncommitted`, not `passed`:
+This subsection does **not** rewrite or promote the prior commit-bound M2 evidence. The following newer run exercised clean candidate commit `06b0ae88df2163d01246421644820e5033e926b3`. Its ignored local record conservatively remains `executed-uncommitted`, not attested `passed`, until attached to immutable CI or review evidence:
 
 ```text
-run ID: e75d9598-39cc-4626-b2a4-6a65c327f244
-Compose project: trax-ps8-maurice-e75d9598-39cc-4626-b2a4-6a65c327f244
+run ID: 11f5fa45-0590-40ad-a569-9e2664de6dac
+Compose project: trax-ps8-maurice-11f5fa45-0590-40ad-a569-9e2664de6dac
 Linux x86_64; Node.js v22.23.1; pinned npm 10.9.4
 Docker client/server 29.6.2; Docker Compose 5.3.1
 wrapper exit: 0; integration subtests: 2/2 passed; cleanup: succeeded
@@ -84,15 +84,15 @@ wrapper exit: 0; integration subtests: 2/2 passed; cleanup: succeeded
 Exact wrapper command (exit 0):
 
 ```bash
-COMPOSE_PROJECT_NAME=trax-ps8-maurice-e75d9598-39cc-4626-b2a4-6a65c327f244 \
-PS8_RUN_ID=e75d9598-39cc-4626-b2a4-6a65c327f244 \
+COMPOSE_PROJECT_NAME=trax-ps8-maurice-11f5fa45-0590-40ad-a569-9e2664de6dac \
+PS8_RUN_ID=11f5fa45-0590-40ad-a569-9e2664de6dac \
 spikes/powersync/scripts/run.sh
 ```
 
 The sanitized structured record observed:
 
 - the unchanged exact M2 replica allowlists and all four online revocation levels;
-- candidate revision `9452b580b9966c50a16409ab8e6f9873a1e1ce0f`, dirty executable-source state and digest `8f6f8a394f6a07d51af9b77c7980da935eb57369f5eab96edab278d7151eb0f4`; the recorded scope covers spike executable, configuration, schema and test sources while excluding documentation and generated/runtime artifacts;
+- candidate revision `06b0ae88df2163d01246421644820e5033e926b3`, clean executable-source state and digest `8f6f8a394f6a07d51af9b77c7980da935eb57369f5eab96edab278d7151eb0f4`; the recorded scope covers spike executable, configuration, schema and test sources while excluding documentation and generated/runtime artifacts;
 - a post-commit response drop with two upload attempts, one resource mutation, version increment, receipt and event;
 - grant evaluation serialized against Journey revocation: the barrier-held command committed before revocation, while the next command was denied;
 - exact `idempotency_conflict` terminal handling through a real SDK queue followed by successful unrelated work;
