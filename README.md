@@ -16,7 +16,7 @@ Trax OS was initiated by Marcel Marinus Bijl, trading as aXeTech, a sole proprie
 
 The web product requires a self-hosted server and authenticated session. PostgreSQL—not IndexedDB—is authoritative, so clearing browser data cannot delete the only copy of a Journey. The current backend provides Argon2id password authentication, opaque/hashed sessions, CSRF protection, Personal workspace isolation, RLS defence in depth and Journey/timeline/packing APIs.
 
-The earlier IndexedDB authority was removed from production composition; the UI now uses the authenticated HTTP adapter and canonical server reloads. See [Server-backed web](docs/development/SERVER_BACKED_WEB.md) and [superseded local prototype](docs/development/LOCAL_JOURNEY_SLICE.md).
+The earlier IndexedDB authority was removed from production composition; the UI now uses the authenticated HTTP adapter and canonical server reloads. See [Server-backed web](docs/development/SERVER_BACKED_WEB.md), the canonical [capability-to-client support matrix](docs/development/CAPABILITY_TO_CLIENT_SUPPORT.md) and the [superseded local prototype](docs/development/LOCAL_JOURNEY_SLICE.md).
 
 ## Develop the current foundation and server-backed app
 
@@ -77,11 +77,11 @@ Apache-2.0 allows everyone—including individuals, companies and competing host
 
 Cloud-specific infrastructure and operational services may remain private, but they must consume the public Trax OS product rather than becoming a private replacement for it.
 
-A self-hosted instance can enable the complete Personal and Agency capability set, including synchronisation, configurable roles and permissions, MCP, travel parties, device security and Atlas integration with an operator-provided model. Trax Cloud plans charge for managed hosting, model usage, backups, support and enterprise operations—not for a privately withheld functional core.
+The V1 target is for a self-hosted instance to enable the complete Personal and Agency capability set, including synchronisation, configurable roles and permissions, MCP, travel parties, device security and Atlas integration with an operator-provided model. These capabilities are not all implemented today; see the [current support matrix](docs/development/CAPABILITY_TO_CLIENT_SUPPORT.md). Trax Cloud plans charge for managed hosting, model usage, backups, support and enterprise operations—not for a privately withheld functional core.
 
 ## Architecture
 
-Trax OS is built around one versioned command contract and a shared application layer. The web, mobile and desktop clients, offline synchronisation, Atlas and external MCP clients all invoke the same command handlers and policies. Read-only access goes through a separate query layer.
+The **V1 target architecture** is built around one versioned command contract and a shared application layer. In that target, the web, mobile and desktop clients, offline synchronisation, Atlas and external MCP clients all invoke the same command handlers and policies. Read-only access goes through a separate query layer. This shared command/change engine is not fully implemented today; see the [current support matrix](docs/development/CAPABILITY_TO_CLIENT_SUPPORT.md).
 
 Every meaningful state change must be authorised, validated, transactionally applied, audited and represented by a change set. Risky actions require a preview and explicit approval; reversible actions expose undo through compensating commands. Sensitive identity and medical documents are device-only: the server stores metadata and temporary encrypted transfer material, but never document decryption keys.
 
@@ -128,6 +128,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 - [Provider and Authoritative Source Registry](docs/integrations/SOURCE_REGISTRY.md)
 - [Phase 0 Threat Model](docs/security/PHASE_0_THREAT_MODEL.md)
 - [Implementation Roadmap](docs/development/IMPLEMENTATION_ROADMAP.md)
+- [Capability-to-client support matrix](docs/development/CAPABILITY_TO_CLIENT_SUPPORT.md)
 - [Architecture documentation index](docs/architecture/README.md)
 - [Design system](docs/design/DESIGN_SYSTEM.md)
 - [Contributing](CONTRIBUTING.md)
