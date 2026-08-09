@@ -145,6 +145,8 @@ Dependency resolution returns an immutable execution context. Long-lived client 
 
 ## 7. Principal and execution context
 
+[ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md) defines the normative evaluation order. Context relationships are resolved server-side for the selected resource and cannot be supplied as reusable client authority.
+
 ```text
 principal_type = user | oauth_client | system
 principal_id
@@ -153,8 +155,9 @@ session_or_grant_id
 workspace_id
 workspace_type
 journey_id
-party_ids
-traveler_id
+active_access_memberships
+resolved_party_relationships
+resolved_traveler_relationships
 role_assignments and evaluated revisions
 oauth_scopes
 origin = web | mobile | desktop | atlas | external_mcp | offline_sync | worker
@@ -391,8 +394,10 @@ Automate at least:
 - workers, sync and Atlas call canonical handlers;
 - every mutating command declares permission, risk and reversibility;
 - every syncable model has workspace/lifecycle/version fields;
-- every journey record preserves workspace and party consistency;
-- restricted query projections and sensitive read audits are tested;
+- every Journey record preserves workspace and party consistency;
+- Journey access membership remains separate from participation under [ADR-005](decisions/ADR-005-MEMBERSHIP-AND-PARTICIPATION.md);
+- runtime policy and every adapter prove equivalent outcomes against the shared [ADR-016 cases](decisions/fixtures/adr-016-policy-cases.json);
+- restricted query projections, atomic rejection of unauthorised mutation fields and sensitive read audits are tested;
 - BYO endpoint/secret boundaries are tested;
 - research MCP scopes, citation validation, safe-fetch and indirect prompt-injection boundaries are tested;
 - migrations upgrade an empty database and core workspace/party tables have RLS policies from their first migration;

@@ -7,6 +7,8 @@ All product and platform documentation is organised under this directory. Reposi
 ### Architecture
 
 - [Architecture index](architecture/README.md)
+- [Architecture decision log](architecture/decisions/README.md)
+- [Canonical architecture glossary](architecture/GLOSSARY.md)
 - [Agentic Core Architecture](architecture/AGENTIC_CORE.md)
 - [Agency, Group Travel and Access Model](architecture/AGENCY_ACCESS_MODEL.md)
 - [Atlas Model Provider Architecture](architecture/ATLAS_PROVIDER_MODEL.md)

@@ -14,6 +14,7 @@
     "generate": "node scripts/contracts.mjs generate",
     "contract:check": "node scripts/contracts.mjs check && node --test scripts/contracts.test.mjs scripts/contract-compatibility.test.mjs",
     "contract:compat": "node scripts/contract-compatibility.mjs",
+    "architecture:check": "node scripts/architecture-decisions.mjs",
     "security:check": "node --test scripts/check-threat-model.test.mjs && node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json",
     "security:closure": "node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json --closure"
   },

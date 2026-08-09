@@ -1,0 +1,1099 @@
+{
+  "fixture_version": 1,
+  "decision": "ADR-016",
+  "description": "Synthetic, privacy-neutral design conformance cases. Runtime policy and adapters must prove equivalent outcomes independently.",
+  "audiences": [
+    "agency_internal",
+    "journey_shared",
+    "party_shared",
+    "traveler_private"
+  ],
+  "grant_only_mode": false,
+  "defaults": {
+    "owner": {
+      "type": "journey",
+      "journey_id": "journey-a",
+      "party_id": null,
+      "traveler_id": null
+    },
+    "scope": {
+      "workspace_match": true,
+      "journey_match": true,
+      "resource_active": true,
+      "owner_workspace_match": true,
+      "owner_journey_match": true,
+      "party_journey_match": true,
+      "traveler_journey_match": true
+    },
+    "audience": "journey_shared",
+    "relationship": "journey_member",
+    "access_basis": {
+      "kind": "user_membership",
+      "state": "active",
+      "active": true,
+      "authenticated": true,
+      "represented_user_match": true,
+      "selected_scope": true
+    },
+    "explicit_deny": false,
+    "resource_policy": {
+      "operations": ["read", "write"],
+      "fields": ["*"]
+    },
+    "role": {
+      "operations": ["read"],
+      "fields": ["title", "meeting_point"]
+    },
+    "grant": {
+      "state": "none",
+      "grantee_match": true,
+      "resource_match": true,
+      "scope_match": true,
+      "operations": [],
+      "fields": [],
+      "purpose_required": false,
+      "purpose_present": true,
+      "purpose_match": true,
+      "delegation_valid": true
+    },
+    "oauth": {
+      "applicable": false,
+      "operations": ["*"],
+      "fields": ["*"]
+    },
+    "origin": {
+      "name": "web",
+      "operations": ["read", "write"],
+      "fields": ["*"]
+    },
+    "request": {
+      "operation": "read",
+      "fields": ["title"]
+    },
+    "effects": {
+      "confirmation_required": false,
+      "sensitive_read": false
+    }
+  },
+  "cases": [
+    {
+      "id": "organizer-not-traveling-can-read-journey",
+      "description": "An active Journey member with a scoped role can manage/read without being a participant.",
+      "participant_exists": false,
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "placeholder-traveler-has-no-access",
+      "description": "Participation without an account or active access membership grants no application access.",
+      "participant_exists": true,
+      "access_basis": {
+        "active": false
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "access_basis_inactive",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "exact-party-relationship-allows",
+      "description": "Only the exact party relationship satisfies party_shared by default.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "exact_party_member",
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "shared-traveler-does-not-bridge-parties",
+      "description": "A traveller shared with party-a does not authorise a caller from party-b.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "shared_traveler_only",
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "guardian-private-read-is-explicit-and-audited",
+      "description": "An explicit guardian relationship plus permission can read the represented traveller's allowed private field.",
+      "owner": {
+        "type": "traveler",
+        "journey_id": "journey-a",
+        "party_id": null,
+        "traveler_id": "traveler-a"
+      },
+      "audience": "traveler_private",
+      "relationship": "guardian",
+      "role": {
+        "operations": ["read"],
+        "fields": ["assistance_summary"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["assistance_summary"]
+      },
+      "effects": {
+        "confirmation_required": false,
+        "sensitive_read": true
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["assistance_summary"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": true
+      }
+    },
+    {
+      "id": "bounded-grant-bridges-missing-party-relationship",
+      "description": "Approved staff can receive one bounded operation without becoming a party member.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["meeting_point"],
+        "purpose_required": true,
+        "purpose_present": true
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["meeting_point"]
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["meeting_point"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "explicit-deny-overrides-active-grant",
+      "description": "A grant cannot bypass an explicit deny.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "explicit_deny": true,
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "explicit_deny",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "expired-grant-does-not-authorize",
+      "description": "An expired grant is not an authorisation path.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "expired",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-without-required-purpose-does-not-authorize",
+      "description": "A grant requiring purpose is invalid when no approved purpose is present.",
+      "owner": {
+        "type": "traveler",
+        "journey_id": "journey-a",
+        "party_id": null,
+        "traveler_id": "traveler-a"
+      },
+      "audience": "traveler_private",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["assistance_summary"],
+        "purpose_required": true,
+        "purpose_present": false
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["assistance_summary"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "oauth-can-reduce-operation",
+      "description": "An OAuth client cannot use an operation absent from its represented-user grant.",
+      "oauth": {
+        "applicable": true,
+        "operations": [],
+        "fields": ["*"]
+      },
+      "origin": {
+        "name": "external_mcp",
+        "operations": ["read"],
+        "fields": ["*"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "oauth_scope_reduced",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "origin-tool-allowlist-can-reduce-operation",
+      "description": "A domain permission is insufficient when the selected origin/tool does not expose the operation.",
+      "origin": {
+        "name": "atlas",
+        "operations": [],
+        "fields": ["*"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "origin_not_allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "read-projects-authorized-field-intersection",
+      "description": "Reads return only fields in the role, OAuth and origin intersection.",
+      "role": {
+        "operations": ["read"],
+        "fields": ["title", "meeting_point"]
+      },
+      "oauth": {
+        "applicable": true,
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["title", "meeting_point"]
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "write-rejects-unauthorized-field",
+      "description": "A mutation with one unauthorised field fails atomically instead of partially writing.",
+      "role": {
+        "operations": ["write"],
+        "fields": ["title"]
+      },
+      "request": {
+        "operation": "write",
+        "fields": ["title", "supplier_margin"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "field_forbidden",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "validated-support-session-is-explicit-basis",
+      "description": "A valid support session uses its own least-privilege allowlist, not an implicit customer membership.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "scope": {
+        "journey_match": true
+      },
+      "audience": "agency_internal",
+      "relationship": "none",
+      "access_basis": {
+        "kind": "support_session",
+        "state": "active",
+        "active": true,
+        "authenticated": true,
+        "selected_scope": true,
+        "strong_auth": true,
+        "reason_present": true,
+        "operation_allowlist": ["read"],
+        "fields": ["support_status"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["support_status"]
+      },
+      "effects": {
+        "confirmation_required": false,
+        "sensitive_read": true
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["support_status"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": true
+      }
+    },
+    {
+      "id": "support-session-without-reason-is-invalid",
+      "description": "Break-glass access without a recorded reason is not a valid access basis.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "none",
+      "access_basis": {
+        "kind": "support_session",
+        "state": "active",
+        "active": true,
+        "authenticated": true,
+        "selected_scope": true,
+        "strong_auth": true,
+        "reason_present": false,
+        "operation_allowlist": ["read"],
+        "fields": ["support_status"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["support_status"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "access_basis_inactive",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "allowlisted-system-execution-is-explicit-basis",
+      "description": "A worker can use only its authenticated, scoped command and field allowlist.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "none",
+      "access_basis": {
+        "kind": "system_execution",
+        "state": "active",
+        "active": true,
+        "authenticated": true,
+        "selected_scope": true,
+        "operation_allowlist": ["read"],
+        "fields": ["delivery_state"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "origin": {
+        "name": "worker",
+        "operations": ["read"],
+        "fields": ["delivery_state"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["delivery_state"]
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["delivery_state"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "revoked-grant-preserves-independent-base-path",
+      "description": "Revoking one grant does not remove data still authorised by role plus exact audience relationship.",
+      "grant": {
+        "state": "revoked",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "agency-staff-can-read-internal-resource",
+      "description": "Active approved staff with a scoped role can use the ordinary agency-internal path.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "agency_staff",
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "revoked-membership-has-no-access",
+      "description": "A revoked Journey membership is not an active access basis even when role and relationship data remain.",
+      "access_basis": {
+        "state": "revoked"
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "access_basis_inactive",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "revoked-party-relationship-does-not-authorize",
+      "description": "A revoked exact-party relationship does not satisfy the party audience.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "revoked_exact_party_member",
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "revoked-grant-as-only-path-does-not-authorize",
+      "description": "A revoked grant cannot remain as the only authorisation path.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "revoked",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-with-mismatched-purpose-does-not-authorize",
+      "description": "A present purpose must match the bounded purpose approved by the grant.",
+      "owner": {
+        "type": "traveler",
+        "journey_id": "journey-a",
+        "party_id": null,
+        "traveler_id": "traveler-a"
+      },
+      "audience": "traveler_private",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["assistance_summary"],
+        "purpose_required": true,
+        "purpose_present": true,
+        "purpose_match": false
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["assistance_summary"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-with-invalid-delegation-does-not-authorize",
+      "description": "A grant loses authority when its required delegation provenance is invalid.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"],
+        "delegation_valid": false
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-with-wrong-grantee-does-not-authorize",
+      "description": "A grant for another represented user cannot authorise the caller.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "grantee_match": false,
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-with-wrong-resource-does-not-authorize",
+      "description": "A grant for another resource cannot authorise the selected resource.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "resource_match": false,
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "grant-with-wrong-scope-does-not-authorize",
+      "description": "A grant cannot cross its server-resolved workspace or Journey scope.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "scope_match": false,
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "resource-policy-can-reject-granted-operation",
+      "description": "A resource-type policy can forbid an operation even when a grant names it.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "resource_policy": {
+        "operations": [],
+        "fields": ["*"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "resource-policy-fields-narrow-granted-write",
+      "description": "A resource-type field ceiling rejects a granted mutation field atomically.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "audience": "party_shared",
+      "relationship": "journey_member",
+      "resource_policy": {
+        "operations": ["write"],
+        "fields": ["title"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["write"],
+        "fields": ["supplier_margin"]
+      },
+      "request": {
+        "operation": "write",
+        "fields": ["supplier_margin"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "field_forbidden",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "origin-fields-narrow-read-projection",
+      "description": "The selected origin can remove a field allowed by role and audience.",
+      "role": {
+        "operations": ["read"],
+        "fields": ["title", "meeting_point"]
+      },
+      "origin": {
+        "name": "atlas",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["title", "meeting_point"]
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "high-risk-write-requires-confirmation",
+      "description": "An otherwise authorised high-risk mutation remains marked for confirmation.",
+      "role": {
+        "operations": ["write"],
+        "fields": ["title"]
+      },
+      "request": {
+        "operation": "write",
+        "fields": ["title"]
+      },
+      "effects": {
+        "confirmation_required": true,
+        "sensitive_read": false
+      },
+      "expected": {
+        "allowed": true,
+        "allowed_fields": ["title"],
+        "reason": "allowed",
+        "confirmation_required": true,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "unauthenticated-system-execution-is-invalid",
+      "description": "An unauthenticated worker cannot use a system allowlist.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "none",
+      "access_basis": {
+        "kind": "system_execution",
+        "state": "active",
+        "active": true,
+        "authenticated": false,
+        "selected_scope": true,
+        "operation_allowlist": ["read"],
+        "fields": ["delivery_state"]
+      },
+      "role": {
+        "operations": [],
+        "fields": []
+      },
+      "origin": {
+        "name": "worker",
+        "operations": ["read"],
+        "fields": ["delivery_state"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["delivery_state"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "access_basis_inactive",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "invalid-owner-audience-combination-fails",
+      "description": "A traveller-owned record cannot be classified as party-shared.",
+      "owner": {
+        "type": "traveler",
+        "journey_id": "journey-a",
+        "party_id": null,
+        "traveler_id": "traveler-a"
+      },
+      "audience": "party_shared",
+      "relationship": "exact_party_member",
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "wrong-owner-journey-fails-before-grant",
+      "description": "A party or traveller discriminator from another Journey fails before role or grant evaluation.",
+      "scope": {
+        "owner_journey_match": false
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "support-session-cannot-borrow-user-role-fields",
+      "description": "A support session cannot borrow ordinary staff-role fields outside its support allowlist.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "agency_staff",
+      "access_basis": {
+        "kind": "support_session",
+        "state": "active",
+        "active": true,
+        "authenticated": true,
+        "selected_scope": true,
+        "strong_auth": true,
+        "reason_present": true,
+        "operation_allowlist": ["read"],
+        "fields": ["support_status"]
+      },
+      "role": {
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "request": {
+        "operation": "read",
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "field_forbidden",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "system-execution-cannot-borrow-user-role-operation",
+      "description": "A system execution cannot borrow an ordinary user-role operation absent from its command allowlist.",
+      "owner": {
+        "type": "agency",
+        "journey_id": null,
+        "party_id": null,
+        "traveler_id": null
+      },
+      "audience": "agency_internal",
+      "relationship": "agency_staff",
+      "access_basis": {
+        "kind": "system_execution",
+        "state": "active",
+        "active": true,
+        "authenticated": true,
+        "selected_scope": true,
+        "operation_allowlist": [],
+        "fields": ["title"]
+      },
+      "role": {
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "origin": {
+        "name": "worker",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "no_authorization_path",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "wrong-party-journey-fails-before-role",
+      "description": "A party discriminator from another Journey fails before role evaluation.",
+      "owner": {
+        "type": "party",
+        "journey_id": "journey-a",
+        "party_id": "party-a",
+        "traveler_id": null
+      },
+      "scope": {
+        "party_journey_match": false
+      },
+      "audience": "party_shared",
+      "relationship": "exact_party_member",
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "wrong-traveler-journey-fails-before-role",
+      "description": "A traveller discriminator from another Journey fails before guardian or self evaluation.",
+      "owner": {
+        "type": "traveler",
+        "journey_id": "journey-a",
+        "party_id": null,
+        "traveler_id": "traveler-a"
+      },
+      "scope": {
+        "traveler_journey_match": false
+      },
+      "audience": "traveler_private",
+      "relationship": "guardian",
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "wrong-owner-workspace-fails-before-grant",
+      "description": "A resource owner from another workspace fails before role or grant evaluation.",
+      "scope": {
+        "owner_workspace_match": false
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    },
+    {
+      "id": "wrong-workspace-fails-before-grant",
+      "description": "No role or grant can cross the server-resolved workspace boundary.",
+      "scope": {
+        "workspace_match": false
+      },
+      "grant": {
+        "state": "active",
+        "operations": ["read"],
+        "fields": ["title"]
+      },
+      "expected": {
+        "allowed": false,
+        "allowed_fields": [],
+        "reason": "invariant_failed",
+        "confirmation_required": false,
+        "sensitive_read_audit": false
+      }
+    }
+  ]
+}

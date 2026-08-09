@@ -95,8 +95,11 @@ A pull request should:
 
 ## Architecture requirements
 
-Changes must preserve the shared application core described in [`docs/architecture/AGENTIC_CORE.md`](docs/architecture/AGENTIC_CORE.md):
+Changes must preserve the shared application core described in [`docs/architecture/AGENTIC_CORE.md`](docs/architecture/AGENTIC_CORE.md) and the accepted [`architecture decision log`](docs/architecture/decisions/README.md). `make check` validates accepted-decision metadata, canonical machine terminology and the shared access-policy cases.
 
+- prose and English UI use `traveller`; code, wire, routes, packages and database identifiers use `traveler` as defined by the [glossary](docs/architecture/GLOSSARY.md);
+- Journey access membership remains separate from travel participation;
+- resources use four default audiences, while bounded grants remain a separate non-transitive authorisation mechanism;
 - every meaningful state mutation enters through a versioned command handler;
 - REST, MCP, Atlas, workers and offline sync remain adapters and do not duplicate business rules or write directly to persistence;
 - query handlers are read-only;

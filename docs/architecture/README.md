@@ -4,6 +4,8 @@ Trax OS is an agentic, offline-first travel operating system with a shared comma
 
 ## Canonical architecture
 
+- [Architecture decision log](decisions/README.md) — accepted decisions, named owners/approvers and linked conformance evidence.
+- [Canonical architecture glossary](GLOSSARY.md) — authoritative prose and machine-contract vocabulary.
 - [Agentic Core Architecture](AGENTIC_CORE.md) — system boundaries, commands and queries, MCP, risk policy, audit and undo, offline sync, device-only documents, persistence and repository split.
 - [Agency, Group Travel and Access Model](AGENCY_ACCESS_MODEL.md) — Personal and Agency workspace modes, configurable roles and permissions, journey leadership, travel-party privacy and delegated access.
 - [Atlas Model Provider Architecture](ATLAS_PROVIDER_MODEL.md) — local, bring-your-own OpenAI-compatible and managed-credit provider modes, credential handling and egress security.
@@ -34,6 +36,8 @@ If implementation and documentation diverge, bring the implementation back into 
 - Sensitive document plaintext and decryption keys remain on trusted devices.
 - Personal and Agency modes share one public application core.
 - Roles are permission collections assigned at an explicit scope.
+- Journey access membership and travel participation are separate relationships.
+- Resources use exactly four default audiences; bounded resource grants are a separate authorisation mechanism.
 - Travel parties are server-enforced, non-transitive privacy boundaries; a traveller may belong to multiple parties.
 - Self-hosters can enable all public Personal and Agency capabilities.
 - Managed entitlements and Atlas credits never replace authorisation or gate data access.
