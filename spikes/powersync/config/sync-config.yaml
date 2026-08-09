@@ -1,0 +1,19 @@
+# Sync Streams edition 3 is the current recommended PowerSync partial-sync API.
+# Every authorization input below is server-side data plus auth.user_id().
+# The spike-only sync_grants projection is transactionally rebuilt by source
+# triggers from user/workspace/Journey/party memberships. Connection parameters
+# are deliberately unused.
+config:
+  edition: 3
+
+streams:
+  effective_resource_grants:
+    auto_subscribe: true
+    query: |
+      SELECT resources.* FROM resources
+        JOIN sync_grants ON resources.id = sync_grants.resource_id
+      WHERE sync_grants.user_id = auth.user_id()
+        AND sync_grants.user_active = true
+        AND sync_grants.workspace_active = true
+        AND sync_grants.journey_active = true
+        AND sync_grants.party_active = true
