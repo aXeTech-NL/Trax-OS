@@ -15,6 +15,12 @@ export interface EvidenceContext {
   runId: string;
   composeProject: string;
   wrapperCommand: string;
+  candidate?: {
+    revision: string;
+    dirty: boolean;
+    sourceTreeDigest: string;
+    sourceScope: string;
+  };
   environment?: {
     platform: string;
     nodeVersion: string;
@@ -75,10 +81,13 @@ export function validateEvidenceEntry(entry: EvidenceEntry): EvidenceEntry {
     if (
       !entry.context?.runId ||
       !entry.context.composeProject ||
-      !entry.context.wrapperCommand
+      !entry.context.wrapperCommand ||
+      !entry.context.candidate?.revision.match(/^[0-9a-f]{40}$/) ||
+      !entry.context.candidate.sourceTreeDigest.match(/^[0-9a-f]{64}$/) ||
+      !entry.context.candidate.sourceScope.trim()
     ) {
       throw new Error(
-        "Executed-uncommitted evidence requires run, project and wrapper context.",
+        "Executed-uncommitted evidence requires run, project, wrapper and source identity context.",
       );
     }
   }

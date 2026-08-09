@@ -31,6 +31,8 @@ migration impact
 status = designed | implemented | integrated | validated
 ```
 
+The repository-owned [delivery traceability evidence index](DELIVERY_TRACEABILITY.md) maintains this matrix without copying volatile GitHub issue state. Architecture and this roadmap remain the stable requirement authorities; issues own executable scope, and Issue #68 is navigation only.
+
 ### Phase 0 threat-model traceability
 
 | Field | Issue #10 trace |

@@ -5,7 +5,8 @@
 CREATE ROLE ps8_replication WITH LOGIN PASSWORD 'trax-ps8-replication-only' REPLICATION;
 CREATE ROLE ps8_storage WITH LOGIN PASSWORD 'trax-ps8-storage-only';
 CREATE ROLE ps8_token_reader WITH LOGIN PASSWORD 'trax-ps8-token-reader-only';
-GRANT CONNECT ON DATABASE powersync_spike TO ps8_replication, ps8_storage, ps8_token_reader;
+CREATE ROLE ps8_command_writer WITH LOGIN PASSWORD 'trax-ps8-command-writer-only';
+GRANT CONNECT ON DATABASE powersync_spike TO ps8_replication, ps8_storage, ps8_token_reader, ps8_command_writer;
 GRANT CREATE ON DATABASE powersync_spike TO ps8_storage;
 
 CREATE TABLE users (
@@ -78,6 +79,8 @@ CREATE TABLE resources (
     party_id uuid,
     payload text NOT NULL,
     version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
+    deleted_at timestamptz,
+
     CHECK (
         (audience = 'journey' AND party_id IS NULL)
         OR (audience = 'party' AND party_id IS NOT NULL)
@@ -86,6 +89,33 @@ CREATE TABLE resources (
         REFERENCES journeys(workspace_id, id) ON DELETE CASCADE,
     FOREIGN KEY (workspace_id, journey_id, party_id)
         REFERENCES parties(workspace_id, journey_id, id) ON DELETE CASCADE
+);
+
+-- Experimental M3a receipts and events are deliberately narrow facsimiles.
+-- They are not Issue #14 command, unit-of-work, audit, or production schemas.
+CREATE TABLE ps8_command_receipts (
+    user_id uuid NOT NULL REFERENCES users(id),
+    command_id uuid NOT NULL,
+    resource_id uuid NOT NULL,
+    digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+    result_state text NOT NULL CHECK (result_state IN ('applied', 'conflict', 'denied')),
+    result_code text NOT NULL CHECK (result_code IN ('applied', 'optimistic_conflict', 'command_denied')),
+    previous_version bigint NOT NULL CHECK (previous_version > 0),
+    current_version bigint NOT NULL CHECK (current_version > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (user_id, command_id)
+);
+
+CREATE TABLE ps8_command_change_events (
+    event_id uuid PRIMARY KEY,
+    user_id uuid NOT NULL REFERENCES users(id),
+    command_id uuid NOT NULL,
+    resource_id uuid NOT NULL REFERENCES resources(id),
+    event_ordinal integer NOT NULL CHECK (event_ordinal >= 0),
+    event_type text NOT NULL CHECK (event_type IN ('ps8.resource.update.v1', 'ps8.resource.soft_delete.v1')),
+    resulting_version bigint NOT NULL CHECK (resulting_version > 1),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (user_id, command_id, event_ordinal)
 );
 
 -- This server-maintained projection makes every contributing active flag
@@ -153,8 +183,10 @@ INSERT INTO resources (id, workspace_id, journey_id, audience, party_id, payload
     ('66666666-6666-4666-8666-666666666601', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'journey', NULL, 'MARKER_W2_FORBIDDEN_SHARED'),
     ('66666666-6666-4666-8666-666666666602', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'party', '44444444-4444-4444-8444-444444444303', 'MARKER_W2_FORBIDDEN_PRIVATE');
 
-CREATE FUNCTION refresh_sync_grants() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION refresh_sync_grants() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('trax-ps8-sync-grants', 0));
     DELETE FROM sync_grants;
     INSERT INTO sync_grants (
         resource_id, user_id, grant_path, workspace_id, journey_id, party_id,
@@ -210,16 +242,37 @@ FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_parties
 AFTER INSERT OR UPDATE OR DELETE ON party_memberships
 FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
-CREATE TRIGGER refresh_sync_grants_resources
-AFTER INSERT OR UPDATE OR DELETE ON resources
+CREATE TRIGGER refresh_sync_grants_resources_insert_delete
+AFTER INSERT OR DELETE ON resources
+FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+CREATE TRIGGER refresh_sync_grants_resources_scope_update
+AFTER UPDATE OF workspace_id, journey_id, audience, party_id ON resources
 FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
 
 -- Populate the projection once after fixture creation through the same trigger
 -- path exercised by revocation updates.
 UPDATE users SET active = active;
 
-GRANT USAGE ON SCHEMA public TO ps8_replication, ps8_token_reader;
+-- Serialize grant evaluation against a projection rebuild without granting the
+-- command role mutation rights. The command acquires this shared transaction
+-- lock in one statement, then reads grants in the next READ COMMITTED snapshot;
+-- every relationship-triggered rebuild takes the matching exclusive lock.
+CREATE FUNCTION ps8_acquire_grant_read_lock()
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT pg_advisory_xact_lock_shared(hashtextextended('trax-ps8-sync-grants', 0))
+$$;
+REVOKE ALL ON FUNCTION ps8_acquire_grant_read_lock() FROM PUBLIC;
+
+GRANT USAGE ON SCHEMA public TO ps8_replication, ps8_token_reader, ps8_command_writer;
+GRANT EXECUTE ON FUNCTION ps8_acquire_grant_read_lock() TO ps8_command_writer;
 GRANT SELECT ON resources, sync_grants TO ps8_replication;
 GRANT SELECT (id, active) ON users TO ps8_token_reader;
+GRANT SELECT ON resources, sync_grants, ps8_command_receipts TO ps8_command_writer;
+GRANT UPDATE (payload, version, deleted_at) ON resources TO ps8_command_writer;
+GRANT INSERT ON ps8_command_receipts, ps8_command_change_events TO ps8_command_writer;
 
 CREATE PUBLICATION powersync FOR TABLE resources, sync_grants;

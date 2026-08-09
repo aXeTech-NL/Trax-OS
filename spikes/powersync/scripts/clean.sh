@@ -59,6 +59,9 @@ verify_resources network network ls
 if [[ -z "${PS8_TOKEN_CREDENTIALS_JSON:-}" ]]; then
   export PS8_TOKEN_CREDENTIALS_JSON='{"alice":"cleanup-only-not-a-runtime-secret-0001","bob":"cleanup-only-not-a-runtime-secret-0002","casey":"cleanup-only-not-a-runtime-secret-0003","eve":"cleanup-only-not-a-runtime-secret-0004"}'
 fi
+if [[ -z "${PS8_POST_COMMIT_FAULT_SECRET:-}" ]]; then
+  export PS8_POST_COMMIT_FAULT_SECRET='cleanup-only-not-a-runtime-secret-0000000000000000'
+fi
 
 COMPOSE=(
   docker compose

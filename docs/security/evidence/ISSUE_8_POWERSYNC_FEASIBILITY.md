@@ -1,8 +1,8 @@
 # Issue #8 PowerSync Feasibility Evidence
 
-**Evidence status:** commit-bound local execution succeeded for this bounded slice; Issue #8 remains open and not fully validated
+**Evidence status:** commit-bound M2 execution succeeded; mutable M3a execution succeeded; complete Issue #8 validation is not claimed
 
-**Scope:** authenticated scoped download replication and online user/workspace/Journey/party revocation only
+**Scope:** commit-bound M2 authenticated scoped download/revocation evidence, plus a separately identified mutable M3a experimental upload/conflict/tombstone observation
 
 **Production impact:** none; isolated sibling spike with synthetic data
 
@@ -67,12 +67,52 @@ spikes/powersync/scripts/run.sh
 
 The retained structured observation records one passed integration subtest, zero skips and 3.232 seconds of in-test duration; the credential/JWT-sanitized TAP transcript independently records 1/1 passing. The recorded context binds the wrapper, run/project identities, exact Node/npm/Docker/Compose versions, endpoints, container health, service image IDs and immutable PowerSync/PostgreSQL image references.
 
-Older candidate attempts may remain under separate ignored run IDs, but they are not cited or used as evidence. The selected run above is the only run supporting current exact observations, and no failed run counts as success evidence.
+Older candidate attempts may remain under separate ignored run IDs, but they are not cited or used as evidence. The selected run above is the only run supporting the M2 commit-bound exact observations, and no failed run counts as success evidence.
+
+### 3.1 Latest M3a mutable candidate execution
+
+This subsection does **not** rewrite or promote the prior commit-bound M2 evidence. The following newer run exercised the uncommitted M3a candidate and therefore remains `executed-uncommitted`, not `passed`:
+
+```text
+run ID: e75d9598-39cc-4626-b2a4-6a65c327f244
+Compose project: trax-ps8-maurice-e75d9598-39cc-4626-b2a4-6a65c327f244
+Linux x86_64; Node.js v22.23.1; pinned npm 10.9.4
+Docker client/server 29.6.2; Docker Compose 5.3.1
+wrapper exit: 0; integration subtests: 2/2 passed; cleanup: succeeded
+```
+
+Exact wrapper command (exit 0):
+
+```bash
+COMPOSE_PROJECT_NAME=trax-ps8-maurice-e75d9598-39cc-4626-b2a4-6a65c327f244 \
+PS8_RUN_ID=e75d9598-39cc-4626-b2a4-6a65c327f244 \
+spikes/powersync/scripts/run.sh
+```
+
+The sanitized structured record observed:
+
+- the unchanged exact M2 replica allowlists and all four online revocation levels;
+- candidate revision `9452b580b9966c50a16409ab8e6f9873a1e1ce0f`, dirty executable-source state and digest `8f6f8a394f6a07d51af9b77c7980da935eb57369f5eab96edab278d7151eb0f4`; the recorded scope covers spike executable, configuration, schema and test sources while excluding documentation and generated/runtime artifacts;
+- a post-commit response drop with two upload attempts, one resource mutation, version increment, receipt and event;
+- grant evaluation serialized against Journey revocation: the barrier-held command committed before revocation, while the next command was denied;
+- exact `idempotency_conflict` terminal handling through a real SDK queue followed by successful unrelated work;
+- competing expected-version-1 commands producing one `applied` and one durable `conflict` result;
+- a digest-bound `command_denied` receipt, denial replay after regrant and later unrelated progress;
+- pending overlay observation under an injected pre-commit failure and overlay removal after terminal results;
+- a retained version-3 tombstone converging across clients, disappearing on revocation, reappearing after regrant and rejecting stale resurrection;
+- twelve terminal receipts and six mutation events across the bounded scenario.
+
+The observation retains command UUIDs, explicit booleans/codes, counts, versions, result states and attempt numbers. It omits JWTs, credentials, command payloads, deleted content and canonical/conflict snapshots. Earlier failed mutable attempts remain under their separate ignored run IDs and do not support this result.
+
+M3a is still a disposable synthetic Issue #8 harness. Its endpoint, envelope, tables, roles, commands, receipts and local completion policy do not define Issue #14 or implement Issues #45/#46. No tombstone retention/purge, restart, capacity, native-runtime, legal or production-policy-equivalence claim follows from this run.
 
 ## 4. Implemented spike boundaries
 
 - Token issuance uses per-principal, per-run credentials and a dedicated database read role limited to `users(id, active)`.
 - PowerSync's replication role has `SELECT` only on `resources` and the spike-only `sync_grants` projection; the publication contains only those tables. Future-table blanket grants were removed.
+- The M3a harness uses an SDK insert-only command queue and local-only overlay/result tables. A separate loopback service accepts only strict synthetic update/soft-delete requests and uses a column-limited PostgreSQL writer role; replication, storage and token roles cannot mutate resources, receipts or events.
+- M3a reauthenticates the JWT and current server-derived grant before receipt lookup. A transaction-scoped advisory lock serializes grant evaluation with relationship-triggered projection rebuilds before resource locking. Resource mutation, receipt and the singleton synthetic event commit atomically; denied commands receive digest-bound durable receipts and cannot apply after regrant. Tombstones and their grants are retained for this bounded run.
+- The pinned SDK workaround persists local result/overlay changes in a separate SQLite transaction before SDK queue completion. Server receipts make interruption retries terminal and idempotent; this does not claim local atomicity or define a production client seam.
 - `sync_grants` is rebuilt transactionally by PostgreSQL triggers from current user, workspace, Journey and party rows. The stream requires every active flag. This explicit projection belongs only to the disposable harness and is **not** a proposed production policy table.
 - The host integration controller still uses a known synthetic PostgreSQL superuser over a loopback-only published port to perform revocation fixtures. This is acceptable only for disposable local synthetic evidence and is not a production credential pattern.
 - First-sync timeout rejects, `currentStatus.hasSynced` is required, every partial client is closed on failure, reads/HTTP/queries have hard deadlines, and test cleanup failures propagate.
@@ -84,7 +124,7 @@ Older candidate attempts may remain under separate ignored run IDs, but they are
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `TH-SYNC-001` / `MIT-SYNC-001` | authenticated synthetic identities; exact cross-workspace/second-Journey/party SQLite assertions; forged identity/scope and invalid JWT fixtures rejected | `executed-uncommitted` | TLS, encrypted local storage, native credentials and compromised-service behavior are `not-validated`                           |
 | `TH-SYNC-002` / `MIT-SYNC-002` | explicit active hierarchy projection, narrow publication/replication grants, immutable rules config                                                       | `executed-uncommitted` | production RLS equivalence, rule administration, production schema and privileged-role review are `not-validated`               |
-| `TH-SYNC-003` / `MIT-SYNC-003` | excluded by first-slice non-goals                                                                                                                         | `not-validated`        | canonical uploads, replay/idempotency, conflict and current-policy command checks                                               |
+| `TH-SYNC-003` / `MIT-SYNC-003` | synthetic singleton upload, digest-bound applied/conflict/denied receipts, current-grant serialization, idempotency retry and terminal queue outcomes | `executed-uncommitted` | production canonical command/UoW/policy equivalence, audited conflict UX and immutable evidence remain `not-validated`          |
 | `TH-SYNC-004` / `MIT-SYNC-004` | online user/workspace/Journey/party purge with stale-token fresh replicas and overlapping path preservation                                               | `executed-uncommitted` | permanently offline/hostile device, forensic deletion, tombstone retention, key purge and delayed reconnect are `not-validated` |
 | `TH-SYNC-005` / `MIT-SYNC-005` | digest-pinned local self-host stack and exact FSL evidence                                                                                                | `executed`             | license acceptance, offline-after-pull run, restart persistence, upgrade/rollback and operational hardening are `not-validated` |
 | `TH-SYNC-006` / `MIT-SYNC-006` | excluded by first-slice non-goals                                                                                                                         | `not-validated`        | subscription/cardinality limits, rate limits, queue/conflict storms and backpressure                                            |
@@ -106,7 +146,7 @@ The production threat register remains correct at `not-implemented`/`designed` w
 
 1. Attach the commit-bound local run to an immutable review or CI evidence record and complete independent review of that immutable result.
 2. Repeat invalid-token and broader malformed-input abuse tests against the eventual selected production version; this slice covers only wrong audience, expiry and deterministic signature corruption.
-3. Add tombstone/offline-window, upload/idempotency, reconciliation/conflict and resource-bound tests.
+3. Complete M3b only after choosing graveyard versus replica epoch/reset: deterministic tombstone retention/purge, delayed reconnect and UUID reuse, queue/conflict bounds and backpressure.
 4. Repeat after service restart and after image pulls with outbound network disabled.
 5. Validate supported Capacitor and Tauri routes separately; compilation is not runtime acceptance.
 6. Complete encryption/key-custody evidence under Issue #9.

@@ -6,7 +6,12 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { generateKeyPair, jwtVerify, SignJWT } from "jose";
 import { assertAuthorizedReplica, pollUntil } from "../src/assertions.js";
-import { waitForInitialSync } from "../src/client.js";
+import { validateQueuedCrud, waitForInitialSync } from "../src/client.js";
+import {
+  commandDigest,
+  parseCommandEnvelope,
+  parseCommandResponse,
+} from "../src/command-protocol.js";
 import {
   validateEvidenceEntry,
   writeEvidenceEntry,
@@ -137,6 +142,56 @@ test("replica assertions require exact IDs and their immutable payload markers",
   );
 });
 
+test("experimental command protocol rejects authority, batches and mismatched results", () => {
+  const command = {
+    commandId: "77777777-7777-4777-8777-777777777701",
+    type: "ps8.resource.update.v1" as const,
+    resourceId: ids.resources.sharedOne,
+    expectedRecordVersion: 1,
+    payload: "bounded replacement",
+  };
+  const envelope = {
+    spikeProtocol: 1,
+    deviceId: "telemetry",
+    localTransactionId: "correlation",
+    commands: [command],
+  };
+  assert.deepEqual(parseCommandEnvelope(envelope).commands, [command]);
+  assert.throws(() => parseCommandEnvelope({ ...envelope, actorId: ids.users.alice }), /authority is forbidden/);
+  assert.throws(() => parseCommandEnvelope({ ...envelope, commands: [{ ...command, workspaceId: ids.workspaces.one }] }), /authority is forbidden/);
+  assert.throws(() => parseCommandEnvelope({ ...envelope, commands: [command, { ...command, commandId: "77777777-7777-4777-8777-777777777702" }] }), /exactly one command/);
+  assert.throws(
+    () => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: "0".repeat(64), state: "applied", code: "applied", previousVersion: 1, currentVersion: 2, attemptNumber: 1 }] }, [command]),
+    /digest mismatch/,
+  );
+  assert.equal(commandDigest(command).length, 64);
+});
+
+test("queue CRUD validation accepts only strict insert-only command PUTs", () => {
+  const valid = {
+    table: "command_queue",
+    op: "PUT",
+    id: "77777777-7777-4777-8777-777777777703",
+    opData: {
+      command_type: "ps8.resource.soft_delete.v1",
+      command_version: 1,
+      resource_id: ids.resources.sharedOne,
+      expected_record_version: 1,
+      payload: null,
+      upload_correlation_id: "test",
+    },
+  };
+  assert.equal(validateQueuedCrud([valid])[0]?.type, "ps8.resource.soft_delete.v1");
+  for (const invalid of [
+    { ...valid, table: "resources", op: "PUT" },
+    { ...valid, table: "resources", op: "PATCH" },
+    { ...valid, table: "resources", op: "DELETE", opData: undefined },
+    { ...valid, op: "PATCH" },
+    { ...valid, opData: { ...valid.opData, actor_id: ids.users.alice } },
+  ]) assert.throws(() => validateQueuedCrud([invalid]), /Unsupported local CRUD|Malformed command_queue/);
+  assert.throws(() => validateQueuedCrud([valid, { ...valid, id: "77777777-7777-4777-8777-777777777704" }]), /exactly one command/);
+});
+
 test("initial sync timeout and false checkpoint both reject", async () => {
   await assert.rejects(
     waitForInitialSync(
@@ -202,6 +257,12 @@ test("evidence states cannot claim execution without executable context", async 
       runId: "12345678-1234-4234-8234-123456789abc",
       composeProject: "trax-ps8-test",
       wrapperCommand: "spikes/powersync/scripts/run.sh",
+      candidate: {
+        revision: "0".repeat(40),
+        dirty: true,
+        sourceTreeDigest: "1".repeat(64),
+        sourceScope: "synthetic executable sources",
+      },
     },
   });
   const payload = JSON.parse(await readFile(target, "utf8")) as EvidenceEntry;

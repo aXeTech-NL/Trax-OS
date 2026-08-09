@@ -6,6 +6,7 @@
 - [Capability-to-client support matrix](CAPABILITY_TO_CLIENT_SUPPORT.md)
 - [Docker Compose evaluation stack](COMPOSE_EVALUATION.md)
 - [Implementation Roadmap](IMPLEMENTATION_ROADMAP.md)
+- [Delivery traceability evidence index](DELIVERY_TRACEABILITY.md)
 - [Implementation Architecture](../architecture/IMPLEMENTATION_ARCHITECTURE.md)
 - [Target Domain Model](../architecture/DOMAIN_MODEL.md)
 
