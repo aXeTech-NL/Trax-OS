@@ -121,6 +121,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 - [Target Domain Model](docs/architecture/DOMAIN_MODEL.md)
 - [Product Scope](docs/product/PRODUCT_SCOPE.md)
 - [Provider and Authoritative Source Registry](docs/integrations/SOURCE_REGISTRY.md)
+- [Phase 0 Threat Model](docs/security/PHASE_0_THREAT_MODEL.md)
 - [Implementation Roadmap](docs/development/IMPLEMENTATION_ROADMAP.md)
 - [Architecture documentation index](docs/architecture/README.md)
 - [Design system](docs/design/DESIGN_SYSTEM.md)
