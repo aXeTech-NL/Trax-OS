@@ -26,13 +26,19 @@ make generate        # update canonical generated contracts
 make db-up            # start the PostgreSQL/PostGIS development service
 make db-migrate       # apply explicit Alembic migrations
 make db-check         # detect migration/metadata drift
-make check            # contract, format, lint, type and test gates
+make threat-model-check # validate security-design traceability
+make check            # contract, security, format, lint, type and test gates
 make test             # focused test suites only
 make dev              # install dependencies, then start API :18000 and web :5173
-make compose-config   # validate the development database configuration
+make compose-config   # validate the development/evaluation stack
+make compose-up       # build, migrate and boot database, API and built web app
+make compose-smoke    # run the synthetic same-origin acceptance smoke
+make compose-down     # stop containers without deleting PostgreSQL data
 ```
 
 Run `make generate` after changing a public FastAPI response. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails when they drift. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
+
+`make` selects `.env` when present and otherwise uses `.env.example`; override `COMPOSE_ENV_FILE` explicitly when needed. The Compose workflow is loopback-only Phase 1 evaluation, not production hosting. Read [`docs/development/COMPOSE_EVALUATION.md`](docs/development/COMPOSE_EVALUATION.md) before running the guarded, destructive `CONFIRM_COMPOSE_CLEAN=1 make compose-clean` target.
 
 npm workspaces and Pydantic/OpenAPI-first generation are provisional v0.1 choices, exposed behind root commands where practical. Changing either contract authority or workspace strategy requires explicit architecture review.
 
@@ -112,6 +118,12 @@ Changes must preserve the shared application core described in [`docs/architectu
 - public command, API, MCP, sync and capability contracts remain backward compatible or are explicitly versioned.
 
 Pull requests that change a domain boundary, trust boundary, public contract, persistence model or reversibility policy must update the affected canonical architecture documents and explain the rationale and compatibility impact in the pull request.
+
+## Threat-model review
+
+The authored Phase 0 register in [`docs/security/phase-0-threat-model.json`](docs/security/phase-0-threat-model.json) must remain aligned with trust-boundary changes. Run `make threat-model-check` for normal structural and evidence-status validation.
+
+`npm run security:closure` is a separate human gate. Closure requires review of a fixed commit by a non-author, current CODEOWNER routing, explicit residual-risk acceptance authority and a completed review record. A CODEOWNER entry alone is not risk acceptance, a tracking issue is not passed evidence, and an author must never self-mark the manual review passed.
 
 ## Security issues
 

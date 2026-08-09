@@ -31,6 +31,22 @@ migration impact
 status = designed | implemented | integrated | validated
 ```
 
+### Phase 0 threat-model traceability
+
+| Field | Issue #10 trace |
+|---|---|
+| Capability | Seven-domain Phase 0 security threat model |
+| Canonical requirement | [Architecture index](../architecture/README.md) and [Phase 0 Threat Model](../security/PHASE_0_THREAT_MODEL.md) |
+| Product requirement | [GitHub issue #10](https://github.com/aXeTech-NL/Trax-OS/issues/10) |
+| Command/query/policy | Design traceability through stable `TH-*` and `MIT-*` IDs; canonical application policy is unchanged |
+| Persistence/integration | Authored JSON register plus dependency-free npm/Make validation; no runtime persistence change |
+| Client flow | Server-backed authenticated web and separately gated Android/macOS local authority, sync, documents and Atlas/MCP flows |
+| Acceptance test | `make threat-model-check`; `npm run security:closure` only after independent review and explicit residual-risk acceptance |
+| Migration impact | None: no database, API, generated contract, dependency or deployment migration |
+| Status | `integrated`; becomes `validated` only after the separate closure review passes |
+
+The model's integrated status records documentation and CI traceability only. It does not promote any future native, sync, document, Atlas/MCP, expanded-access or production self-host control beyond its actual implementation evidence.
+
 ## 3. Phase 1 — repository and contract foundation
 
 Deliver:

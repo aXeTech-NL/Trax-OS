@@ -32,6 +32,10 @@ Do not include:
 - private keys;
 - unrelated confidential information.
 
+## Public security design
+
+The [Phase 0 Threat Model](docs/security/PHASE_0_THREAT_MODEL.md) documents public architecture-level trust boundaries, controls, verification gates and residual-risk review. Keep exploit details and unresolved vulnerabilities out of that public model and follow the confidential reporting process above.
+
 ## Architecture-sensitive security areas
 
 Reports are especially welcome for issues involving:

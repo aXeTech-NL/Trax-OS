@@ -1,0 +1,38 @@
+# Repository metadata and local configuration
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/.npmrc
+**/.pypirc
+**/.netrc
+**/.ssh
+**/.aws
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+.pi-subagents
+
+# Installed dependencies and build output
+**/node_modules
+**/.venv
+**/dist
+**/coverage
+**/htmlcov
+
+# Tool caches and local runtime data
+**/__pycache__
+**/*.py[cod]
+**/.coverage
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+**/*.tsbuildinfo
+postgres-data
+
+# Editor and operating-system files
+.DS_Store
+.idea
+.vscode

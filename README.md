@@ -20,7 +20,7 @@ The earlier IndexedDB authority was removed from production composition; the UI 
 
 ## Develop the current foundation and server-backed app
 
-Prerequisites: Node.js 22, npm 10, Python 3.12 and [uv 0.12](https://docs.astral.sh/uv/). Docker Compose is optional and only needed for the PostgreSQL/PostGIS development service.
+Prerequisites: Node.js 22, npm 10, Python 3.12 and [uv 0.12](https://docs.astral.sh/uv/). Docker Compose v2 is used for PostgreSQL/PostGIS and for the complete Phase 1 evaluation stack.
 
 ```bash
 make bootstrap       # clean installs from package-lock.json and uv.lock
@@ -31,9 +31,14 @@ make check           # contract drift, formatting, lint, types and PostgreSQL-ba
 make test            # focused API and web tests
 make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate compose.yaml without starting services
+make compose-up      # build, migrate and start the API plus built web app on :8080
+make compose-smoke   # exercise the same-origin stack with synthetic data
+make compose-down    # stop containers while preserving PostgreSQL data
 ```
 
-The API exposes public health/version/capability discovery, authenticated `/api/v1/auth/*`, and server-authoritative `/api/v1/journeys/*`. During `make dev`, Vite proxies `/api` and `/health` to the API. Run the database and migration commands before starting the API. The frontend registers/restores sessions and uses these authenticated endpoints for every Journey mutation.
+The API exposes public health/version/capability discovery, authenticated `/api/v1/auth/*`, and server-authoritative `/api/v1/journeys/*`. During `make dev`, Vite proxies `/api` and `/health` to the API. The Compose web service provides the same-origin proxy for its built static app. The frontend registers/restores sessions and uses these authenticated endpoints for every Journey mutation.
+
+The Compose path is loopback-only development/self-host evaluation evidence, not a production deployment. It uses development credentials and HTTP cookies; see the [Docker Compose evaluation guide](docs/development/COMPOSE_EVALUATION.md) for isolated clean runs, persistent-volume safety, compatibility and production security boundaries.
 
 npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment. The root Make interface keeps common workflows stable. Pydantic/OpenAPI-first generation is likewise a provisional v0.1 contract foundation rather than a final architecture decision. See [Foundation development](docs/development/FOUNDATION.md).
 
@@ -120,6 +125,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 - [Target Domain Model](docs/architecture/DOMAIN_MODEL.md)
 - [Product Scope](docs/product/PRODUCT_SCOPE.md)
 - [Provider and Authoritative Source Registry](docs/integrations/SOURCE_REGISTRY.md)
+- [Phase 0 Threat Model](docs/security/PHASE_0_THREAT_MODEL.md)
 - [Implementation Roadmap](docs/development/IMPLEMENTATION_ROADMAP.md)
 - [Architecture documentation index](docs/architecture/README.md)
 - [Design system](docs/design/DESIGN_SYSTEM.md)
