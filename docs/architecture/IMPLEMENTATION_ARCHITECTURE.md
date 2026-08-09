@@ -41,6 +41,8 @@ Self-hosting          Docker Compose in V1; Helm/Kubernetes after V1
 
 The complexity of composite keys, row-level security, partial indexes, explicit constraints and migration control justifies direct SQLAlchemy/Alembic use rather than treating an ORM convenience layer as the schema authority.
 
+For the V1 HTTP API, public Pydantic wire models plus FastAPI path-operation declarations are the canonical authored contract. Deterministic OpenAPI 3.1 is the language-neutral publication/review artifact, and TypeScript declarations are generated static projections rather than runtime validators. [ADR-002](decisions/ADR-002-CONTRACT-AUTHORITY.md) defines ownership, compatibility policy and reconsideration triggers.
+
 ## 3. Public monorepo mapping
 
 ```text
@@ -69,7 +71,7 @@ packages/
 └── ui/                  shared design-system implementation
 ```
 
-Python domain models and TypeScript UI models are not forced into one executable package. Public wire contracts are generated from or validated against one canonical schema source and checked for compatibility in CI.
+Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. TypeScript adapters retain explicit untrusted-JSON checks and wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
 
 ## 4. Backend module boundaries
 
@@ -399,7 +401,8 @@ Automate at least:
 - BYO endpoint/secret boundaries are tested;
 - research MCP scopes, citation validation, safe-fetch and indirect prompt-injection boundaries are tested;
 - migrations upgrade an empty database and core workspace/party tables have RLS policies from their first migration;
-- OpenAPI, command, MCP, sync and TypeScript contracts remain compatible with advertised client ranges;
+- OpenAPI generation is byte-identical across independent runs, generated files match, and HTTP changes remain compatible with the trusted base revision;
+- command, MCP, sync and TypeScript contracts remain compatible with advertised client ranges as those contracts are introduced;
 - fixture data is never labelled live;
 - offline claims have matching local-store acceptance evidence;
 - the PowerSync integration passes party filtering, revocation, idempotency, client and licence/self-hosting gates;

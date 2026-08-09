@@ -53,6 +53,16 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
 }
 SUCCESS_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"headers": RESPONSE_HEADERS}}
+CREATED_RESPONSE: dict[int | str, dict[str, Any]] = {201: {"headers": RESPONSE_HEADERS}}
+NO_CONTENT_RESPONSE: dict[int | str, dict[str, Any]] = {204: {"headers": RESPONSE_HEADERS}}
+READINESS_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **SUCCESS_RESPONSE,
+    503: {
+        "model": ReadyResponse,
+        "description": "An implemented dependency is unavailable",
+        "headers": RESPONSE_HEADERS,
+    },
+}
 
 health_router = APIRouter(
     prefix="/health",
@@ -68,7 +78,7 @@ def live() -> LiveResponse:
     return LiveResponse(status="live")
 
 
-@health_router.get("/ready", response_model=ReadyResponse, responses=SUCCESS_RESPONSE)
+@health_router.get("/ready", response_model=ReadyResponse, responses=READINESS_RESPONSES)
 async def ready(request: Request, response: Response) -> ReadyResponse:
     """Report readiness of API and authoritative PostgreSQL storage."""
     database_ready = await request.app.state.database.ready()

@@ -1,15 +1,29 @@
 """Authenticated server-backed web routes."""
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, Security, status
+from fastapi.security import APIKeyCookie
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trax_api.auth import authenticate, login, logout, register, require_csrf
+from trax_api.auth import (
+    CSRF_HEADER,
+    SESSION_COOKIE,
+    authenticate,
+    login,
+    logout,
+    register,
+    require_csrf,
+)
 from trax_api.database import request_session
 from trax_api.journey_repository import JourneyRepository
-from trax_api.routes import ERROR_RESPONSES, RESPONSE_HEADERS
+from trax_api.routes import (
+    CREATED_RESPONSE,
+    ERROR_RESPONSES,
+    NO_CONTENT_RESPONSE,
+    SUCCESS_RESPONSE,
+)
 from trax_api.server_models import (
     JourneyCreate,
     JourneyListResponse,
@@ -34,6 +48,25 @@ from trax_api.settings import Settings
 
 Session = Annotated[AsyncSession, Depends(request_session)]
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
+_session_cookie = APIKeyCookie(
+    name=SESSION_COOKIE,
+    scheme_name="SessionCookie",
+    description="Opaque authenticated Trax OS session cookie.",
+    auto_error=False,
+)
+authenticated_router = APIRouter(dependencies=[Security(_session_cookie)])
+mutation_router = APIRouter(dependencies=[Security(_session_cookie)])
+MUTATION_OPENAPI_EXTRA: dict[str, Any] = {
+    "parameters": [
+        {
+            "name": CSRF_HEADER,
+            "in": "header",
+            "required": True,
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "schema": {"type": "string"},
+        }
+    ]
+}
 
 
 def settings(request: Request) -> Settings:
@@ -47,7 +80,12 @@ async def repository(request: Request, session: AsyncSession, *, csrf: bool) -> 
     return JourneyRepository(session, context)
 
 
-@router.post("/auth/register", response_model=SessionResponse, status_code=201)
+@router.post(
+    "/auth/register",
+    response_model=SessionResponse,
+    status_code=201,
+    responses=CREATED_RESPONSE,
+)
 async def register_route(
     command: RegisterRequest, request: Request, response: Response, session: Session
 ) -> SessionResponse:
@@ -55,7 +93,7 @@ async def register_route(
     return SessionResponse(authenticated=True, user=context.response())
 
 
-@router.post("/auth/login", response_model=SessionResponse)
+@router.post("/auth/login", response_model=SessionResponse, responses=SUCCESS_RESPONSE)
 async def login_route(
     command: LoginRequest, request: Request, response: Response, session: Session
 ) -> SessionResponse:
@@ -63,55 +101,84 @@ async def login_route(
     return SessionResponse(authenticated=True, user=context.response())
 
 
-@router.get("/auth/session", response_model=SessionResponse)
+@authenticated_router.get(
+    "/auth/session", response_model=SessionResponse, responses=SUCCESS_RESPONSE
+)
 async def session_route(request: Request, session: Session) -> SessionResponse:
     context = await authenticate(request, session)
     return SessionResponse(authenticated=True, user=context.response())
 
 
-@router.post("/auth/logout", response_model=LogoutResponse)
+@mutation_router.post(
+    "/auth/logout",
+    response_model=LogoutResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def logout_route(request: Request, response: Response, session: Session) -> LogoutResponse:
     await logout(request, session, response)
     return LogoutResponse(authenticated=False)
 
 
-@router.get("/journeys", response_model=JourneyListResponse)
+@authenticated_router.get(
+    "/journeys", response_model=JourneyListResponse, responses=SUCCESS_RESPONSE
+)
 async def list_journeys(request: Request, session: Session) -> JourneyListResponse:
     items = await (await repository(request, session, csrf=False)).list_journeys()
     return JourneyListResponse(items=items)
 
 
-@router.post("/journeys", response_model=JourneyResponse, status_code=201)
+@mutation_router.post(
+    "/journeys",
+    response_model=JourneyResponse,
+    status_code=201,
+    responses=CREATED_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def create_journey(
     command: JourneyCreate, request: Request, session: Session
 ) -> JourneyResponse:
     return await (await repository(request, session, csrf=True)).create_journey(command)
 
 
-@router.get("/journeys/{journey_id}", response_model=JourneyResponse)
+@authenticated_router.get(
+    "/journeys/{journey_id}",
+    response_model=JourneyResponse,
+    responses=SUCCESS_RESPONSE,
+)
 async def get_journey(journey_id: UUID, request: Request, session: Session) -> JourneyResponse:
     return await (await repository(request, session, csrf=False)).get_journey(journey_id)
 
 
-@router.put("/journeys/{journey_id}", response_model=JourneyResponse)
+@mutation_router.put(
+    "/journeys/{journey_id}",
+    response_model=JourneyResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def update_journey(
     journey_id: UUID, command: JourneyUpdate, request: Request, session: Session
 ) -> JourneyResponse:
     return await (await repository(request, session, csrf=True)).update_journey(journey_id, command)
 
 
-@router.delete(
+@mutation_router.delete(
     "/journeys/{journey_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
-    responses={204: {"headers": RESPONSE_HEADERS}},
+    responses=NO_CONTENT_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
 )
 async def delete_journey(journey_id: UUID, request: Request, session: Session) -> Response:
     await (await repository(request, session, csrf=True)).delete_journey(journey_id)
     return Response(status_code=204)
 
 
-@router.get("/journeys/{journey_id}/segments", response_model=SegmentListResponse)
+@authenticated_router.get(
+    "/journeys/{journey_id}/segments",
+    response_model=SegmentListResponse,
+    responses=SUCCESS_RESPONSE,
+)
 async def list_segments(
     journey_id: UUID, request: Request, session: Session
 ) -> SegmentListResponse:
@@ -119,14 +186,25 @@ async def list_segments(
     return SegmentListResponse(items=items)
 
 
-@router.post("/journeys/{journey_id}/segments", response_model=SegmentResponse, status_code=201)
+@mutation_router.post(
+    "/journeys/{journey_id}/segments",
+    response_model=SegmentResponse,
+    status_code=201,
+    responses=CREATED_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def create_segment(
     journey_id: UUID, command: SegmentCreate, request: Request, session: Session
 ) -> SegmentResponse:
     return await (await repository(request, session, csrf=True)).create_segment(journey_id, command)
 
 
-@router.put("/journeys/{journey_id}/segments/{segment_id}", response_model=SegmentResponse)
+@mutation_router.put(
+    "/journeys/{journey_id}/segments/{segment_id}",
+    response_model=SegmentResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def update_segment(
     journey_id: UUID,
     segment_id: UUID,
@@ -139,9 +217,11 @@ async def update_segment(
     )
 
 
-@router.post(
+@mutation_router.post(
     "/journeys/{journey_id}/segments/{segment_id}/reorder",
     response_model=SegmentResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
 )
 async def reorder_segment(
     journey_id: UUID,
@@ -158,10 +238,12 @@ async def reorder_segment(
     )
 
 
-@router.delete(
+@mutation_router.delete(
     "/journeys/{journey_id}/segments/{segment_id}",
     status_code=204,
     response_class=Response,
+    responses=NO_CONTENT_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
 )
 async def delete_segment(
     journey_id: UUID, segment_id: UUID, request: Request, session: Session
@@ -170,20 +252,35 @@ async def delete_segment(
     return Response(status_code=204)
 
 
-@router.get("/journeys/{journey_id}/packing", response_model=PackingListResponse)
+@authenticated_router.get(
+    "/journeys/{journey_id}/packing",
+    response_model=PackingListResponse,
+    responses=SUCCESS_RESPONSE,
+)
 async def list_packing(journey_id: UUID, request: Request, session: Session) -> PackingListResponse:
     items = await (await repository(request, session, csrf=False)).list_packing(journey_id)
     return PackingListResponse(items=items)
 
 
-@router.post("/journeys/{journey_id}/packing", response_model=PackingResponse, status_code=201)
+@mutation_router.post(
+    "/journeys/{journey_id}/packing",
+    response_model=PackingResponse,
+    status_code=201,
+    responses=CREATED_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def create_packing(
     journey_id: UUID, command: PackingCreate, request: Request, session: Session
 ) -> PackingResponse:
     return await (await repository(request, session, csrf=True)).create_packing(journey_id, command)
 
 
-@router.put("/journeys/{journey_id}/packing/{item_id}", response_model=PackingResponse)
+@mutation_router.put(
+    "/journeys/{journey_id}/packing/{item_id}",
+    response_model=PackingResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
+)
 async def update_packing(
     journey_id: UUID,
     item_id: UUID,
@@ -196,9 +293,11 @@ async def update_packing(
     )
 
 
-@router.put(
+@mutation_router.put(
     "/journeys/{journey_id}/packing/{item_id}/progress",
     response_model=PackingResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
 )
 async def update_packing_progress(
     journey_id: UUID,
@@ -212,13 +311,19 @@ async def update_packing_progress(
     )
 
 
-@router.delete(
+@mutation_router.delete(
     "/journeys/{journey_id}/packing/{item_id}",
     status_code=204,
     response_class=Response,
+    responses=NO_CONTENT_RESPONSE,
+    openapi_extra=MUTATION_OPENAPI_EXTRA,
 )
 async def delete_packing(
     journey_id: UUID, item_id: UUID, request: Request, session: Session
 ) -> Response:
     await (await repository(request, session, csrf=True)).delete_packing(journey_id, item_id)
     return Response(status_code=204)
+
+
+router.include_router(authenticated_router)
+router.include_router(mutation_router)

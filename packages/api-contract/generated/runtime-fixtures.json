@@ -1,0 +1,32 @@
+{
+  "capabilities": {
+    "capabilities": [
+      {
+        "key": "foundation.contract-discovery",
+        "status": "available"
+      },
+      {
+        "key": "identity.password-session",
+        "status": "available"
+      },
+      {
+        "key": "journeys.server-authority",
+        "status": "available"
+      },
+      {
+        "key": "journeys.timeline",
+        "status": "available"
+      },
+      {
+        "key": "journeys.packing",
+        "status": "available"
+      }
+    ],
+    "schema_version": "1"
+  },
+  "version": {
+    "api_version": "1",
+    "application": "Trax OS",
+    "version": "0.1.0"
+  }
+}

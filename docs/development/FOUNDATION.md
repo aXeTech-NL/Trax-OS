@@ -16,11 +16,11 @@ The current feature baseline adds explicit identity/session, Personal workspace,
 
 ## Provisional tool choices
 
-npm 10 workspaces are used because npm is present in the supported local environment. `make` is the stable developer interface where practical, so a later package-manager decision does not need to rename common workflows.
+npm 10 workspaces are used because npm is present in the supported local environment. `make` is the stable developer interface where practical, so a later package-manager decision does not need to rename common workflows. The workspace mechanism remains provisional pending issue #12.
 
-For v0.1, FastAPI/Pydantic models are the canonical wire source. `make generate` serialises FastAPI OpenAPI deterministically and uses `openapi-typescript` to create the TypeScript schema consumed by the HTTP repository. `make check` regenerates both artifacts in a temporary directory and compares bytes, so it detects missing or stale generated files without modifying the worktree.
+[ADR-002](../architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) accepts public Pydantic wire models plus FastAPI path-operation declarations as the V1 HTTP contract's canonical authored source. `make generate` serialises FastAPI OpenAPI with stable formatting, creates immutable TypeScript declarations with `openapi-typescript`, and produces privacy-neutral runtime fixtures from real instance routes. The generated package owns projections only; it is not a runtime client or a second editable authority.
 
-These choices are foundations, not permanent architecture decisions. A change to contract authority, compatibility policy or workspace tooling requires owner-approved architecture documentation.
+`make check` generates all contract artifacts twice in independent temporary directories, requires byte-identical results and checks the committed copies without modifying the worktree. Compatibility-policy fixtures prove representative additive and breaking classifications. CI separately compares the candidate OpenAPI document with the trusted base Git revision, fails closed on external references and rejects breaking or unclassified differences. Generated TypeScript is static-only; transport adapters continue to validate untrusted JSON explicitly.
 
 ## Runtime shape
 

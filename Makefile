@@ -2,7 +2,7 @@ COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE = docker compose --env-file "$(COMPOSE_ENV_FILE)"
 UV_RUN = uv run --env-file "$(COMPOSE_ENV_FILE)" --project apps/api
 
-.PHONY: bootstrap generate contract-check architecture-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check contract-compat architecture-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -13,6 +13,10 @@ generate:
 
 contract-check:
 	npm run contract:check
+
+contract-compat:
+	@test -n "$(BASE_CONTRACT)" || (echo "BASE_CONTRACT is required" >&2; exit 2)
+	npm run contract:compat -- "$(BASE_CONTRACT)" packages/api-contract/generated/openapi.json
 
 architecture-check:
 	npm run architecture:check

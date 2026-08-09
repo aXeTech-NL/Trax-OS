@@ -2,6 +2,7 @@
   "name": "@trax-os/api-contract",
   "version": "0.1.0",
   "private": true,
+  "description": "Generated Trax OS OpenAPI and static TypeScript contract projections",
   "type": "module",
   "types": "generated/schema.ts",
   "exports": {

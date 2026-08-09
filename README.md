@@ -26,8 +26,8 @@ Prerequisites: Node.js 22, npm 10, Python 3.12 and [uv 0.12](https://docs.astral
 make bootstrap       # clean installs from package-lock.json and uv.lock
 make db-up           # start development PostgreSQL/PostGIS
 make db-migrate      # apply explicit Alembic revisions
-make generate        # regenerate OpenAPI and TypeScript contracts
-make check           # contract drift, formatting, lint, types and PostgreSQL-backed tests
+make generate        # regenerate OpenAPI, TypeScript and runtime fixtures
+make check           # contract determinism/drift, compatibility fixtures, lint, types and tests
 make test            # focused API and web tests
 make dev             # install dependencies, then start API :18000 and web :5173
 make compose-config  # validate compose.yaml without starting services
@@ -40,7 +40,7 @@ The API exposes public health/version/capability discovery, authenticated `/api/
 
 The Compose path is loopback-only development/self-host evaluation evidence, not a production deployment. It uses development credentials and HTTP cookies; see the [Docker Compose evaluation guide](docs/development/COMPOSE_EVALUATION.md) for isolated clean runs, persistent-volume safety, compatibility and production security boundaries.
 
-npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment. The root Make interface keeps common workflows stable. Pydantic/OpenAPI-first generation is likewise a provisional v0.1 contract foundation rather than a final architecture decision. See [Foundation development](docs/development/FOUNDATION.md).
+npm workspaces are the provisional JavaScript workspace mechanism because npm is available in the supported development environment; issue #12 owns the broader package-boundary decision. [ADR-002](docs/architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) accepts Pydantic wire models plus FastAPI route metadata as the V1 HTTP authority, with generated OpenAPI/TypeScript projections and base-revision compatibility checks. See [Foundation development](docs/development/FOUNDATION.md).
 
 ## What Trax OS aims to provide
 
@@ -122,6 +122,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 - [Atlas Model Provider Architecture](docs/architecture/ATLAS_PROVIDER_MODEL.md)
 - [V1 Agent-assisted Web Research](docs/architecture/AGENT_RESEARCH_V1.md)
 - [Implementation Architecture](docs/architecture/IMPLEMENTATION_ARCHITECTURE.md)
+- [ADR-002: HTTP contract authority](docs/architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md)
 - [Target Domain Model](docs/architecture/DOMAIN_MODEL.md)
 - [Product Scope](docs/product/PRODUCT_SCOPE.md)
 - [Provider and Authoritative Source Registry](docs/integrations/SOURCE_REGISTRY.md)

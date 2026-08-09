@@ -1066,10 +1066,18 @@
         "title": "VersionResponse",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "SessionCookie": {
+        "description": "Opaque authenticated Trax OS session cookie.",
+        "in": "cookie",
+        "name": "trax_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
-    "description": "Versioned foundation contract. OpenAPI/Pydantic is the provisional canonical contract source for v0.1.",
+    "description": "Versioned foundation contract. Pydantic wire models and FastAPI route metadata are the canonical authored source for the V1 HTTP contract.",
     "summary": "Public Trax OS API foundation",
     "title": "Trax OS API",
     "version": "0.1.0"
@@ -1098,7 +1106,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1215,6 +1231,17 @@
     "/api/v1/auth/logout": {
       "post": {
         "operationId": "logout_route_api_v1_auth_logout_post",
+        "parameters": [
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1224,7 +1251,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1335,6 +1370,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Logout Route"
       }
     },
@@ -1360,7 +1400,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1486,7 +1534,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1597,6 +1653,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Session Route"
       }
     },
@@ -1750,7 +1811,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1861,10 +1930,26 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "List Journeys"
       },
       "post": {
         "operationId": "create_journey_api_v1_journeys_post",
+        "parameters": [
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1884,7 +1969,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -1995,6 +2088,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Create Journey"
       }
     },
@@ -2009,6 +2107,15 @@
             "schema": {
               "format": "uuid",
               "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -2134,6 +2241,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Delete Journey"
       },
       "get": {
@@ -2159,7 +2271,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2270,6 +2390,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Get Journey"
       },
       "put": {
@@ -2282,6 +2407,15 @@
             "schema": {
               "format": "uuid",
               "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -2305,7 +2439,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2416,6 +2558,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Update Journey"
       }
     },
@@ -2443,7 +2590,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2554,6 +2709,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "List Packing"
       },
       "post": {
@@ -2566,6 +2726,15 @@
             "schema": {
               "format": "uuid",
               "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -2589,7 +2758,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2700,6 +2877,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Create Packing"
       }
     },
@@ -2726,11 +2908,28 @@
               "title": "Item Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2841,6 +3040,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Delete Packing"
       },
       "put": {
@@ -2865,6 +3069,15 @@
               "title": "Item Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -2886,7 +3099,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -2997,6 +3218,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Update Packing"
       }
     },
@@ -3023,6 +3249,15 @@
               "title": "Item Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3044,7 +3279,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3155,6 +3398,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Update Packing Progress"
       }
     },
@@ -3182,7 +3430,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3293,6 +3549,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "List Segments"
       },
       "post": {
@@ -3305,6 +3566,15 @@
             "schema": {
               "format": "uuid",
               "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
               "type": "string"
             }
           }
@@ -3328,7 +3598,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3439,6 +3717,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Create Segment"
       }
     },
@@ -3465,11 +3748,28 @@
               "title": "Segment Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3580,6 +3880,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Delete Segment"
       },
       "put": {
@@ -3604,6 +3909,15 @@
               "title": "Segment Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3625,7 +3939,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3736,6 +4058,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Update Segment"
       }
     },
@@ -3762,6 +4089,15 @@
               "title": "Segment Id",
               "type": "string"
             }
+          },
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3783,7 +4119,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3894,6 +4238,11 @@
             }
           }
         },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "summary": "Reorder Segment"
       }
     },
@@ -4115,6 +4464,24 @@
               }
             },
             "description": "Unexpected server error",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            },
+            "description": "An implemented dependency is unavailable",
             "headers": {
               "X-Request-ID": {
                 "description": "Request correlation identifier.",

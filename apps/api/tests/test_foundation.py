@@ -180,3 +180,80 @@ def test_openapi_exposes_typed_foundation_contracts_and_correlation() -> None:
         assert responses["500"]["content"]["application/json"]["schema"]["$ref"].endswith(
             "/ErrorResponse"
         )
+
+
+def test_openapi_describes_runtime_authentication_csrf_and_success_headers() -> None:
+    schema = create_app().openapi()
+    security_schemes = schema["components"]["securitySchemes"]
+    assert security_schemes["SessionCookie"] == {
+        "type": "apiKey",
+        "description": "Opaque authenticated Trax OS session cookie.",
+        "in": "cookie",
+        "name": "trax_session",
+    }
+
+    assert schema["paths"]["/api/v1/auth/session"]["get"]["security"] == [{"SessionCookie": []}]
+    journey_create = schema["paths"]["/api/v1/journeys"]["post"]
+    assert journey_create["security"] == [{"SessionCookie": []}]
+    assert {
+        "name": "X-CSRF-Token",
+        "in": "header",
+        "required": True,
+        "description": "Double-submit token matching the trax_csrf cookie.",
+        "schema": {"type": "string"},
+    } in journey_create["parameters"]
+    assert schema["paths"]["/api/v1/auth/register"]["post"].get("security") is None
+    assert schema["paths"]["/api/v1/auth/login"]["post"].get("security") is None
+
+    mutation_operations = {
+        ("/api/v1/auth/logout", "post"),
+        ("/api/v1/journeys", "post"),
+        ("/api/v1/journeys/{journey_id}", "delete"),
+        ("/api/v1/journeys/{journey_id}", "put"),
+        ("/api/v1/journeys/{journey_id}/segments", "post"),
+        ("/api/v1/journeys/{journey_id}/segments/{segment_id}", "delete"),
+        ("/api/v1/journeys/{journey_id}/segments/{segment_id}", "put"),
+        ("/api/v1/journeys/{journey_id}/segments/{segment_id}/reorder", "post"),
+        ("/api/v1/journeys/{journey_id}/packing", "post"),
+        ("/api/v1/journeys/{journey_id}/packing/{item_id}", "delete"),
+        ("/api/v1/journeys/{journey_id}/packing/{item_id}", "put"),
+        ("/api/v1/journeys/{journey_id}/packing/{item_id}/progress", "put"),
+    }
+    csrf_parameter = {
+        "name": "X-CSRF-Token",
+        "in": "header",
+        "required": True,
+        "description": "Double-submit token matching the trax_csrf cookie.",
+        "schema": {"type": "string"},
+    }
+    for path, path_item in schema["paths"].items():
+        if not (
+            path.startswith("/api/v1/journeys")
+            or path in {"/api/v1/auth/session", "/api/v1/auth/logout"}
+        ):
+            continue
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "post", "put"}:
+                continue
+            assert operation["security"] == [{"SessionCookie": []}]
+            parameters = operation.get("parameters", [])
+            assert (csrf_parameter in parameters) is ((path, method) in mutation_operations)
+
+    ready_responses = schema["paths"]["/health/ready"]["get"]["responses"]
+    assert ready_responses["503"]["headers"]["X-Request-ID"]["schema"] == {"type": "string"}
+    assert ready_responses["503"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/ReadyResponse"
+    )
+
+    for path, path_item in schema["paths"].items():
+        if not path.startswith("/api/v1/"):
+            continue
+        for method, operation in path_item.items():
+            if method not in {"delete", "get", "post", "put"}:
+                continue
+            success = next(
+                status for status in ("200", "201", "204") if status in operation["responses"]
+            )
+            assert operation["responses"][success]["headers"]["X-Request-ID"]["schema"] == {
+                "type": "string"
+            }
