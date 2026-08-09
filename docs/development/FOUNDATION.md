@@ -10,7 +10,7 @@ The v0.1 implementation contains only components with executable or checkable va
 - `apps/api`: FastAPI/Pydantic application and focused tests;
 - `apps/web`: URL-routed React client with an injected repository boundary;
 - `packages/api-contract`: reviewed generated OpenAPI and TypeScript contracts;
-- `compose.yaml`: PostgreSQL/PostGIS development dependency only.
+- `compose.yaml`: PostgreSQL/PostGIS plus the migration, API and built web services used by the Phase 1 evaluation stack.
 
 The current feature baseline adds explicit identity/session, Personal workspace, Journey, timeline and packing tables and migrations described in [`SERVER_BACKED_WEB.md`](SERVER_BACKED_WEB.md). Synchronisation, email verification/reset, MFA, document cryptography, Atlas/MCP business flows, native clients and deployment remain absent. The earlier IndexedDB implementation is a superseded prototype only.
 
@@ -33,7 +33,9 @@ The API exposes:
 
 Every response passes through request-ID middleware. A syntactically safe incoming `X-Request-ID` is preserved; otherwise a new opaque ID is returned. Expected and unexpected failures use the stable `error.code`, `error.message`, `error.details` and `error.request_id` envelope. The generic handler does not expose exception detail.
 
-The API now provides authenticated server-authoritative Journey/timeline/packing contracts. The production web composition uses authenticated HTTP auth/Journey adapters and reloads canonical server state after mutations; no IndexedDB Journey authority remains. Components remain URL-addressable and tests use in-memory adapters where appropriate. Explicit per-command client methods will replace the current diff-based save adapter before compound workflows expand.
+The API now provides authenticated server-authoritative Journey/timeline/packing contracts. The connected web composition uses authenticated HTTP auth/Journey adapters and reloads canonical server state after mutations; no IndexedDB Journey authority remains. Components remain URL-addressable and tests use in-memory adapters where appropriate. Explicit per-command client methods will replace the current diff-based save adapter before compound workflows expand.
+
+The digest-pinned Compose evaluation images package the existing application without adding a second business path. A one-shot Alembic service must complete before the API can become ready; an unprivileged static web service serves the built PWA and proxies `/api` and `/health` to the internal API. API and web runtime containers are non-root, read-only and capability-dropped. The browser-facing port remains bound to loopback.
 
 ## Database baseline
 
@@ -45,7 +47,7 @@ Validate configuration with:
 make compose-config
 ```
 
-Start and migrate the database before API development:
+Start and migrate the database before host-run API development:
 
 ```bash
 cp .env.example .env
@@ -53,6 +55,16 @@ make db-up
 make db-migrate
 ```
 
+Or build, migrate and boot the complete evaluation stack, then exercise a synthetic schema-backed flow:
+
+```bash
+make compose-up
+make compose-smoke
+make compose-down
+```
+
+The normal shutdown preserves the existing `postgres-data` volume. Clean CI evidence uses a unique `COMPOSE_PROJECT_NAME`, an initially empty volume and guarded destructive cleanup. See [`COMPOSE_EVALUATION.md`](COMPOSE_EVALUATION.md) for exact commands, residual synthetic-account behavior and rollback guidance.
+
 ## Deferred decisions
 
-Explicit approval is still required for production deployment, expanded access roles, email delivery/recovery, PowerSync, document cryptography, Atlas/MCP and remaining ADR-controlled contracts. Web is connected-only. The canonical encrypted native runtime, command/change authority, export/import and self-hosted pairing semantics remain requirements for Android and macOS local-only clients.
+Explicit approval is still required for production deployment, expanded access roles, email delivery/recovery, PowerSync, document cryptography, Atlas/MCP and remaining ADR-controlled contracts. The Compose stack is loopback-only development/self-host evaluation and does not supply TLS, production secrets, backups or upgrade guarantees. Web is connected-only. The canonical encrypted native runtime, command/change authority, export/import and self-hosted pairing semantics remain requirements for Android and macOS local-only clients.

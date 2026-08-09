@@ -67,3 +67,53 @@ jobs:
         run: |
           git diff --check
           git diff --exit-code
+          test -z "$(git status --short --untracked-files=all)"
+
+  compose-evaluation:
+    name: Clean Compose boot and smoke
+    needs: foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: trax-os-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      POSTGRES_PORT: "55432"
+      TRAX_WEB_PORT: "18080"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Validate and boot the empty evaluation stack
+        run: |
+          make compose-config
+          make compose-up
+      - name: Run schema-backed same-origin smoke
+        run: make compose-smoke
+      - name: Prove the built web client executes through Compose
+        env:
+          TRAX_PWA_ORIGIN: http://127.0.0.1:18080
+        run: npm run test:pwa --workspace @trax-os/web
+      - name: Verify migration, users and loopback-only ports
+        run: |
+          migration_id="$(docker compose --env-file .env.example ps -a -q migration)"
+          test -n "$migration_id"
+          test "$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$migration_id")" = "exited:0"
+          api_id="$(docker compose --env-file .env.example ps -q api)"
+          test -n "$api_id"
+          test "$(docker compose --env-file .env.example exec -T api id -u)" != "0"
+          test "$(docker compose --env-file .env.example exec -T web id -u)" != "0"
+          test "$(docker compose --env-file .env.example port database 5432)" = "127.0.0.1:55432"
+          test "$(docker compose --env-file .env.example port web 8080)" = "127.0.0.1:18080"
+          test "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$api_id")" = "{}"
+      - name: Show bounded Compose diagnostics
+        if: failure()
+        run: |
+          docker compose --env-file .env.example ps -a
+          docker compose --env-file .env.example logs --no-color --tail=200
+      - name: Remove the isolated evaluation stack
+        if: always()
+        run: |
+          CONFIRM_COMPOSE_CLEAN=1 make compose-clean
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project=$COMPOSE_PROJECT_NAME)"
+          test -z "$(docker volume ls -q --filter label=com.docker.compose.project=$COMPOSE_PROJECT_NAME)"
+          test -z "$(docker network ls -q --filter label=com.docker.compose.project=$COMPOSE_PROJECT_NAME)"

@@ -31,7 +31,16 @@ make db-migrate
 make check
 ```
 
-`TRAX_DATABASE_URL` selects the authoritative PostgreSQL database. Production deployments must set `TRAX_SESSION_COOKIE_SECURE=true`, provide TLS and use managed secrets rather than the development credentials in `.env.example`.
+The Phase 1 Compose evaluation packages the same connected application behind one web origin:
+
+```bash
+make compose-up
+make compose-smoke
+```
+
+The unprivileged web container serves the built PWA and proxies `/api` and `/health` to the internal API; it does not add browser-local authority or a second persistence path. The synthetic smoke proves registration, CSRF and Journey table access after the one-shot migration. See [`COMPOSE_EVALUATION.md`](COMPOSE_EVALUATION.md).
+
+`TRAX_DATABASE_URL` selects the authoritative PostgreSQL database for host-run commands; `TRAX_COMPOSE_DATABASE_URL` selects it on the Compose network. Production deployments must set `TRAX_SESSION_COOKIE_SECURE=true`, provide TLS and use managed secrets rather than the development credentials in `.env.example`.
 
 ## Auth routes
 
