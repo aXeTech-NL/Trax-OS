@@ -1,6 +1,6 @@
 # Issue #8 PowerSync Feasibility Evidence
 
-**Evidence status:** executed uncommitted candidate; Issue #8 remains open and not validated
+**Evidence status:** commit-bound local execution succeeded for this bounded slice; Issue #8 remains open and not fully validated
 
 **Scope:** authenticated scoped download replication and online user/workspace/Journey/party revocation only
 
@@ -34,13 +34,13 @@ The PowerSync service source and image declare **FSL-1.1-ALv2**, not Apache-2.0 
 
 The npm lock pins `better-sqlite3@12.10.0`, but its install script may fetch a platform-specific prebuild or compile native code outside lockfile checksums. The binary actually executed is therefore **not independently provenance-validated**.
 
-## 3. Latest local candidate execution
+## 3. Latest commit-bound candidate execution
 
-Executed from base commit `d126c956d88a7f3c1d2ac3a213597da153aa6bf4` with uncommitted candidate files. Runtime JSON remains ignored and local; the command must be repeated against an immutable candidate before any `passed` claim.
+Executed from clean candidate commit `021cdba4eb8c2bc9a06bdacb3f7ab77e60df225a`. Runtime JSON remains ignored and local, so the table retains the conservative `executed-uncommitted` state until the evidence is attached to an immutable review or CI record; the bounded command and assertions nevertheless completed successfully.
 
 ```text
-run ID: 691787eb-b0bd-44c3-b91d-a76177a807f5
-Compose project: trax-ps8-maurice-691787eb-b0bd-44c3-b91d-a76177a807f5
+run ID: 45e1d37e-89ec-462a-9c72-76bfbc939c64
+Compose project: trax-ps8-maurice-45e1d37e-89ec-462a-9c72-76bfbc939c64
 Linux x86_64; Node.js v22.23.1; pinned npm 10.9.4
 Docker client/server 29.6.2; Docker Compose 5.3.1
 ```
@@ -48,8 +48,8 @@ Docker client/server 29.6.2; Docker Compose 5.3.1
 Exact wrapper command (exit 0):
 
 ```bash
-COMPOSE_PROJECT_NAME=trax-ps8-maurice-691787eb-b0bd-44c3-b91d-a76177a807f5 \
-PS8_RUN_ID=691787eb-b0bd-44c3-b91d-a76177a807f5 \
+COMPOSE_PROJECT_NAME=trax-ps8-maurice-45e1d37e-89ec-462a-9c72-76bfbc939c64 \
+PS8_RUN_ID=45e1d37e-89ec-462a-9c72-76bfbc939c64 \
 spikes/powersync/scripts/run.sh
 ```
 
@@ -65,7 +65,7 @@ spikes/powersync/scripts/run.sh
 | Invalid JWT service behavior                            | `executed-uncommitted` | valid-token clients completed first sync; wrong audience returned 401/`PSYNC_S2105`, expiry returned 401/`PSYNC_S2103`, and the deterministically byte-tampered signature returned 401/`PSYNC_S2101` `signature verification failed` |
 | Guarded destructive cleanup                             | `executed-uncommitted` | cleanup verified run ownership labels/marker, removed containers/volume/network, and completed before success evidence was written                                                                                                   |
 
-The retained structured observation records one passed integration subtest, zero skips and 3.201 seconds of in-test duration; the credential/JWT-sanitized TAP transcript independently records 1/1 passing. The recorded context binds the wrapper, run/project identities, exact Node/npm/Docker/Compose versions, endpoints, container health, service image IDs and immutable PowerSync/PostgreSQL image references.
+The retained structured observation records one passed integration subtest, zero skips and 3.232 seconds of in-test duration; the credential/JWT-sanitized TAP transcript independently records 1/1 passing. The recorded context binds the wrapper, run/project identities, exact Node/npm/Docker/Compose versions, endpoints, container health, service image IDs and immutable PowerSync/PostgreSQL image references.
 
 Older candidate attempts may remain under separate ignored run IDs, but they are not cited or used as evidence. The selected run above is the only run supporting current exact observations, and no failed run counts as success evidence.
 
@@ -104,7 +104,7 @@ The production threat register remains correct at `not-implemented`/`designed` w
 
 ## 7. Remaining Issue #8 gates
 
-1. Rerun from an immutable committed candidate under Node 22/npm 10 and independent review.
+1. Attach the commit-bound local run to an immutable review or CI evidence record and complete independent review of that immutable result.
 2. Repeat invalid-token and broader malformed-input abuse tests against the eventual selected production version; this slice covers only wrong audience, expiry and deterministic signature corruption.
 3. Add tombstone/offline-window, upload/idempotency, reconciliation/conflict and resource-bound tests.
 4. Repeat after service restart and after image pulls with outbound network disabled.
