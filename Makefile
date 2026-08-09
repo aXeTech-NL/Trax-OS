@@ -1,10 +1,8 @@
-
 COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE = docker compose --env-file "$(COMPOSE_ENV_FILE)"
 UV_RUN = uv run --env-file "$(COMPOSE_ENV_FILE)" --project apps/api
 
-.PHONY: bootstrap generate contract-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
-
+.PHONY: bootstrap generate contract-check architecture-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -15,6 +13,9 @@ generate:
 
 contract-check:
 	npm run contract:check
+
+architecture-check:
+	npm run architecture:check
 
 threat-model-check:
 	npm run security:check
@@ -31,7 +32,7 @@ test:
 	$(UV_RUN) pytest apps/api/tests
 	npm run test --workspace @trax-os/web
 
-check: contract-check threat-model-check api-check web-check test
+check: contract-check architecture-check threat-model-check api-check web-check test
 
 dev:
 	$(UV_RUN) npm run dev

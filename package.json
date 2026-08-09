@@ -13,6 +13,7 @@
     "dev": "concurrently -k -n api,web -c blue,green \"uv run --project apps/api uvicorn trax_api.main:app --reload --port 18000\" \"npm run dev --workspace @trax-os/web\"",
     "generate": "node scripts/contracts.mjs generate",
     "contract:check": "node scripts/contracts.mjs check",
+    "architecture:check": "node scripts/architecture-decisions.mjs",
     "security:check": "node --test scripts/check-threat-model.test.mjs && node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json",
     "security:closure": "node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json --closure"
   },

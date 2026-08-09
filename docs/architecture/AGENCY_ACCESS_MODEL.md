@@ -1,7 +1,7 @@
 # Agency, Group Travel and Access Model
 
 **Status:** Canonical extension to the Agentic Core Architecture  
-**Related:** [Agentic Core Architecture](AGENTIC_CORE.md)
+**Related:** [Agentic Core Architecture](AGENTIC_CORE.md), [ADR-005](decisions/ADR-005-MEMBERSHIP-AND-PARTICIPATION.md), [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md)
 
 ## 1. Purpose
 
@@ -70,12 +70,13 @@ Platform / Trax OS instance
 
 - A **workspace** is the tenant boundary. `workspace.type` is `PERSONAL` or `AGENCY`.
 - A **journey** belongs to exactly one workspace.
-- A **journey membership** gives a person a role within one journey.
-- A **travel party** is the primary privacy-sharing group inside a journey, such as a family, couple, room-sharing group or custom composition.
-- A **traveller** is a person participating in the journey and may or may not have a user account yet.
+- A **Journey membership** records an authenticated user's access lifecycle within one Journey. Only an active membership is an access basis, and scoped role assignments remain separate.
+- A **Journey participant** links a traveller profile to one Journey and creates no access by itself.
+- A **travel party** is the primary privacy-sharing group inside a Journey, such as a family, couple, room-sharing group or custom composition.
+- A **traveller** is a person participating in the Journey and may or may not have a user account yet.
 - A **principal** is a user, service or authorised OAuth client evaluated by policy.
 
-A traveller may belong to multiple travel parties in one journey. Access is evaluated against the caller's exact memberships and never propagates transitively through a traveller to another party. Operational cohorts such as “bus 2” or “vegetarian meals” remain labels unless deliberately created as privacy parties. Each `party_shared` resource has one party boundary; cross-party sharing is explicit.
+A verified user↔traveller identity link may establish a self relationship but grants no Journey or party access by itself. A traveller may belong to multiple travel parties in one Journey. Access is evaluated against the caller's exact relationships and never propagates transitively through a traveller to another party. Operational cohorts such as “bus 2” or “vegetarian meals” remain labels unless deliberately created as privacy parties. Each `party_shared` resource retains one exact party boundary; a bounded resource grant can authorise access without merging or reclassifying that boundary.
 
 ## 3. Scoped roles
 
@@ -105,11 +106,11 @@ Role inheritance is explicit:
 - party roles apply only to the explicitly assigned travel party or parties;
 - guardianship applies only to the represented traveller and permitted data categories.
 
-A user account is not required when an agency first creates a traveller record. Access starts only after an invitation is accepted or another verified identity is linked.
+A user account is not required when an agency first creates a traveller record. Invitation, participation and identity linking alone grant no access. Access starts only after identity verification activates the applicable access membership and scoped assignments.
 
 ## 4. Role capabilities
 
-The following matrix describes the built-in templates. Actual access is calculated from role permissions, assignment scope, resource audience, explicit grants and non-configurable security invariants.
+The following matrix describes the built-in templates. Actual access is calculated from role permissions, assignment scope, resource audience, bounded resource grants and non-configurable security invariants.
 
 | Capability | Platform super admin | Agency owner/admin | Travel organiser | Journey leader | Party manager | Traveller |
 |---|---:|---:|---:|---:|---:|---:|
@@ -232,15 +233,7 @@ The `personal_owner` template is managed by the product's simple personal-sharin
 
 ### Policy combination
 
-Effective access uses these rules:
-
-1. non-configurable security invariants are evaluated first;
-2. an explicit deny overrides an allow;
-3. role permissions are limited to the assignment scope;
-4. resource audience and relationship policy further restrict access;
-5. time-limited grants may add only explicitly permitted operations;
-6. OAuth scopes can reduce but never increase effective access;
-7. field-level filtering is applied before data leaves the server.
+Effective access follows the normative ordering and independent authorisation paths in [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md): server-derived invariants and scope, a valid explicit access basis, explicit deny, scoped role plus exact audience relationship or a valid bounded grant, OAuth/origin narrowing, field policy, then confirmation/audit/revocation effects. Support and system execution use separate allowlisted access bases rather than implicit customer membership.
 
 A role manager cannot grant a permission that they do not hold with `delegable = true` at the same or a broader applicable scope.
 
@@ -261,19 +254,18 @@ Role-definition changes, high-risk assignments and permission broadening create 
 
 ## 6. Resource audiences
 
-Every resource that can contain scoped information carries an audience classification.
+Every resource that can contain scoped information carries exactly one audience classification.
 
 ```text
 agency_internal
 journey_shared
 party_shared
 traveler_private
-explicit_grants
 ```
 
 ### `agency_internal`
 
-Visible only to authorised agency staff. Examples:
+Ordinary default visibility is limited to active approved agency staff in the applicable scope. Explicit support/system access bases remain separately constrained and audited under ADR-016. Examples:
 
 - supplier contracts;
 - margin and commission;
@@ -282,7 +274,7 @@ Visible only to authorised agency staff. Examples:
 
 ### `journey_shared`
 
-Visible to all active journey participants and assigned staff. Examples:
+Visible to active Journey access members whose scoped permissions allow the operation. Participation alone grants no access. Examples:
 
 - group itinerary;
 - meeting points;
@@ -307,11 +299,11 @@ Visible to the traveller, an authorised guardian/delegate and explicitly approve
 - personal document metadata;
 - personal emergency details.
 
-### `explicit_grants`
+### Resource grants are separate
 
-Used when access does not follow the default hierarchy. Grants identify the principal, resource or category, allowed operations, purpose and expiry.
+When default audience relationships are insufficient, a resource grant identifies the grantee, resource or category, allowed operations and fields, purpose, validity window and delegation provenance. A grant does not change the resource audience, create membership or propagate access through a shared traveller. V1 defines no grant-only audience or resource mode.
 
-Changing an audience to a broader scope is a high-risk command with preview and explicit approval. V1 research context and submitted candidates inherit an explicit journey/party/traveller audience; external agents never receive a full agency journey or unrelated party preferences.
+Changing an audience classification or adding broader access through a grant is a high-risk command with preview and explicit approval. V1 research context and submitted candidates inherit an explicit Journey/party/traveller audience; external agents never receive a full agency Journey or unrelated party preferences.
 
 ## 7. Shared plan and private overlays
 
@@ -436,36 +428,28 @@ Every query is policy-filtered server-side. List counts, search facets, autocomp
 
 ## 11. Policy evaluation
 
-RBAC provides baseline capabilities; attribute- and relationship-based policy decides access to a specific resource.
+RBAC provides baseline capabilities; [ADR-016](decisions/ADR-016-ACCESS-POLICY-ALGEBRA.md) defines the normative attribute-, relationship-, grant- and origin-aware decision. The ordinary authorisation paths are `(scoped role AND exact audience relationship) OR valid bounded resource grant`; invariants, active access basis and explicit deny are mandatory before either path.
 
-```text
-allow when
-  principal has required role at applicable scope
-  AND principal belongs to or is assigned to the workspace/journey/party
-  AND resource audience permits the principal
-  AND purpose/grant requirements are satisfied
-  AND grant and membership are active
-  AND requested fields are allowed
-```
-
-`ExecutionContext` includes at least:
+`ExecutionContext` includes at least server-derived:
 
 ```text
 actor_type
 actor_id
 represented_user_id
 workspace_id
+active_access_memberships
 active_role_assignments
 journey_id
-party_ids
-traveler_id
+resolved_party_relationships
+resolved_traveler_relationships
 oauth_client_id
 scopes
+origin
 purpose
 support_session_id
 ```
 
-Policies return a structured decision with allowed fields, denied fields, reason, required confirmation and audit requirements. The decision records the evaluated role-definition revisions so later role edits cannot make historical access decisions ambiguous.
+Relationship fields are resolved for the selected resource; they are not reusable client claims. Policies return a structured decision with allowed fields, denied fields, reason, required confirmation and audit requirements. Reads project allowed fields, while mutations with any unauthorised field fail atomically. The decision records the evaluated role-definition revisions and independent authorisation paths so later role/grant edits cannot make historical access decisions ambiguous.
 
 ## 12. Persistence model
 
@@ -520,12 +504,28 @@ role_assignments
 ├── expires_at
 └── revoked_at
 
-journey_memberships
-├── journey_id
+traveler_user_links
+├── user_id
 ├── traveler_id
+├── verification_status
+├── established_at
+└── revoked_at
+
+journey_memberships
+├── id
+├── journey_id
 ├── user_id
 ├── status = INVITED | ACTIVE | DECLINED | REMOVED
-└── joined_at
+├── joined_at
+└── revoked_at
+
+journey_participants
+├── id
+├── journey_id
+├── traveler_id
+├── status = ACTIVE | REMOVED
+├── joined_at
+└── removed_at
 
 travel_parties
 ├── id
@@ -536,7 +536,7 @@ travel_parties
 
 party_memberships
 ├── party_id
-├── traveler_id
+├── journey_participant_id
 ├── status
 ├── is_default_for_ui
 ├── joined_at
@@ -545,13 +545,18 @@ party_memberships
 
 resource_grants
 ├── id
+├── workspace_id
+├── journey_id
 ├── resource_type
 ├── resource_id
 ├── principal_type
 ├── principal_id
 ├── operations
+├── allowed_fields
 ├── purpose
 ├── granted_by
+├── delegation_provenance
+├── starts_at
 ├── expires_at
 └── revoked_at
 ```
@@ -560,13 +565,13 @@ All journey-owned tables include `workspace_id` and `journey_id`; party-scoped r
 
 ## 13. Invitations, removal and offline revocation
 
-For agency journeys:
+For Agency Journeys:
 
-1. An organiser creates a journey and placeholder traveller records.
-2. Parties and private audiences are assigned before email invitations with a seven-day default expiry are sent.
-3. Invitees verify and link their user identity; resend and revoke invalidate earlier invitation tokens.
-4. Access starts only after membership becomes active.
-5. The sync API issues only records permitted to the active membership and party.
+1. An organiser creates a Journey and separate placeholder Journey-participant records.
+2. Parties, party memberships and private audiences are assigned before email invitations with a seven-day default expiry are sent.
+3. Invitees verify their user identity; an approved invitation creates/activates a separate Journey access membership and may create the explicit user↔traveller link named by the invitation. Resend and revoke invalidate earlier tokens.
+4. Participation and an identity link grant no access; access starts only after the Journey membership and required scoped assignments become active.
+5. The sync API issues only records permitted by the active access basis and exact relationships.
 6. A role, party or journey removal creates revocation tombstones.
 7. Clients purge inaccessible cached records and wrapped document keys on next sync.
 8. Security-sensitive revocations invalidate relevant sessions and refresh tokens immediately.
@@ -683,7 +688,7 @@ The audit UI distinguishes agency actions, journey-leader actions, party actions
 8. Platform break-glass, tenant isolation, audit and device-only cryptography are not workspace-configurable.
 9. A travel party is a privacy boundary, not merely a UI grouping.
 10. A traveller may belong to multiple privacy parties, but authorisation never propagates transitively between them.
-11. Every `party_shared` resource belongs to one exact party unless an explicit grant broadens it.
+11. Every `party_shared` resource retains one exact party; a bounded grant may authorise specific access but never broadens or reclassifies that audience.
 12. Agency staff access follows purpose and least privilege.
 13. Audience broadening, role broadening and party-membership changes require preview and approval.
 14. Sensitive reads are audited as well as mutations.
