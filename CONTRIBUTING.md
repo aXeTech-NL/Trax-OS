@@ -30,10 +30,15 @@ make threat-model-check # validate security-design traceability
 make check            # contract, security, format, lint, type and test gates
 make test             # focused test suites only
 make dev              # install dependencies, then start API :18000 and web :5173
-make compose-config   # validate the development database configuration
+make compose-config   # validate the development/evaluation stack
+make compose-up       # build, migrate and boot database, API and built web app
+make compose-smoke    # run the synthetic same-origin acceptance smoke
+make compose-down     # stop containers without deleting PostgreSQL data
 ```
 
 Run `make generate` after changing a public Pydantic wire model or FastAPI route declaration. Generated files in `packages/api-contract/generated/` are reviewed and committed; `make check` fails on nondeterministic output, drift or compatibility-policy fixture regressions. CI also compares generated OpenAPI with the pull request base revision. Both `make dev` and `npm run dev` perform the locked bootstrap before startup. Do not commit `.env`, dependency directories, caches, builds or database data.
+
+`make` selects `.env` when present and otherwise uses `.env.example`; override `COMPOSE_ENV_FILE` explicitly when needed. The Compose workflow is loopback-only Phase 1 evaluation, not production hosting. Read [`docs/development/COMPOSE_EVALUATION.md`](docs/development/COMPOSE_EVALUATION.md) before running the guarded, destructive `CONFIRM_COMPOSE_CLEAN=1 make compose-clean` target.
 
 npm workspaces remain provisional pending issue #12 and are exposed behind root commands where practical. [ADR-002](docs/architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) defines the accepted Pydantic/FastAPI authority, generated package ownership and compatibility policy. Changing contract authority or compatibility policy requires a new reviewed architecture decision.
 
