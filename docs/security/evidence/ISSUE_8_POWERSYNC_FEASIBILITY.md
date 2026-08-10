@@ -1,8 +1,8 @@
 # Issue #8 PowerSync Feasibility Evidence
 
-**Evidence status:** commit-bound M2 execution succeeded; mutable M3a execution succeeded; complete Issue #8 validation is not claimed
+**Evidence status:** commit-bound M2, M3a and M3b-R1 executions succeeded locally; complete Issue #8 validation is not claimed
 
-**Scope:** commit-bound M2 authenticated scoped download/revocation evidence, plus a separately identified mutable M3a experimental upload/conflict/tombstone observation
+**Scope:** commit-bound authenticated scoped download/revocation, experimental upload/conflict/tombstone and bounded retention/incarnation observations; later replica-reset, capacity, restart and native gates remain separate
 
 **Production impact:** none; isolated sibling spike with synthetic data
 
@@ -106,12 +106,41 @@ The observation retains command UUIDs, explicit booleans/codes, counts, versions
 
 M3a is still a disposable synthetic Issue #8 harness. Its endpoint, envelope, tables, roles, commands, receipts and local completion policy do not define Issue #14 or implement Issues #45/#46. No tombstone retention/purge, restart, capacity, native-runtime, legal or production-policy-equivalence claim follows from this run.
 
+### 3.2 M3b-R1 commit-bound retention candidate
+
+The following later run exercised clean candidate commit `bdb6bcaf61974f717993d74322bee420102cc27b`. Its ignored local record remains conservatively `executed-uncommitted` until attached to immutable CI or review evidence:
+
+```text
+run ID: 5459e933-163e-46a7-944d-1ad047a4c37e
+Compose project: trax-ps8-maurice-5459e933-163e-46a7-944d-1ad047a4c37e
+Linux x86_64; Node.js v22.23.2; pinned npm 10.9.4
+Docker client/server 29.7.2; Docker Compose 5.4.0
+wrapper exit: 0; unit tests: 9/9; integration subtests: 2/2; cleanup: succeeded
+source digest: 110d571142e2130da30d92882e00607cf2f5ab0911391297aecda3470409aefe
+```
+
+The sanitized structured record observed:
+
+- endpoint/DB-authoritative deterministic time, with payload retained at exactly `P30D` and cleared immediately after it;
+- a payload-free minimal graveyard retained at exactly `P90D`, purged immediately afterward, and idempotent monotonic floor advancement that did not skip a lower retained marker;
+- configured `P120D` graveyard retention while the fixed connected-client predicate still required reset immediately after `P90D`;
+- immutable resource incarnation IDs in replication, queued-command digests and terminal receipts;
+- UUID reuse rejected while a marker existed, then permitted only with a new incarnation after expiry; an old-incarnation command terminated as `stale_incarnation` without mutating the replacement, and later queue work progressed;
+- hardened `SECURITY DEFINER` resolution, denied temporary-schema shadowing for the command writer and restricted database TEMP privileges;
+- command/retention serialization and a direct limited-writer soft-delete overlap completing without deadlock through the transaction-serialized state counter;
+- digest-bound terminal behavior for purged targets and post-commit retries after revocation, without exposing or rewriting the prior applied receipt;
+- evidence directory mode `0700`, every retained artifact mode `0600`, credential/JWT sanitization and guarded Docker cleanup.
+
+This R1 slice does **not** prove a server-registered replica, a trusted completed PowerSync checkpoint, actual stale-replica quarantine/reset/full resync, restart/offline-after-pull behavior, capacity/backpressure, encryption, native runtime or production policy equivalence. Injected endpoint time proves boundary logic, not 90 days of elapsed operation. The synthetic tables/functions/limits are not production contracts or migrations.
+
 ## 4. Implemented spike boundaries
 
 - Token issuance uses per-principal, per-run credentials and a dedicated database read role limited to `users(id, active)`.
 - PowerSync's replication role has `SELECT` only on `resources` and the spike-only `sync_grants` projection; the publication contains only those tables. Future-table blanket grants were removed.
 - The M3a harness uses an SDK insert-only command queue and local-only overlay/result tables. A separate loopback service accepts only strict synthetic update/soft-delete requests and uses a column-limited PostgreSQL writer role; replication, storage and token roles cannot mutate resources, receipts or events.
 - M3a reauthenticates the JWT and current server-derived grant before receipt lookup. A transaction-scoped advisory lock serializes grant evaluation with relationship-triggered projection rebuilds before resource locking. Resource mutation, receipt and the singleton synthetic event commit atomically; denied commands receive digest-bound durable receipts and cannot apply after regrant. Tombstones and their grants are retained for this bounded run.
+- M3b-R1 adds spike-only immutable resource incarnations, a payload-free graveyard, strict `P30D`/`P90D` retention transitions and a monotonic retained floor. Its reset predicate uses endpoint time/floor plus checkpoint inputs that are not yet bound to a registered replica; client self-report is not trusted or validated.
+- R1 hardens `SECURITY DEFINER` search paths and TEMP privileges, serializes retention against command/grant processing and keeps terminal denied/stale outcomes from blocking later queue work. The deterministic clock and maintenance functions are restricted test controls, not operator APIs.
 - The pinned SDK workaround persists local result/overlay changes in a separate SQLite transaction before SDK queue completion. Server receipts make interruption retries terminal and idempotent; this does not claim local atomicity or define a production client seam.
 - `sync_grants` is rebuilt transactionally by PostgreSQL triggers from current user, workspace, Journey and party rows. The stream requires every active flag. This explicit projection belongs only to the disposable harness and is **not** a proposed production policy table.
 - The host integration controller still uses a known synthetic PostgreSQL superuser over a loopback-only published port to perform revocation fixtures. This is acceptable only for disposable local synthetic evidence and is not a production credential pattern.
@@ -124,8 +153,8 @@ M3a is still a disposable synthetic Issue #8 harness. Its endpoint, envelope, ta
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `TH-SYNC-001` / `MIT-SYNC-001` | authenticated synthetic identities; exact cross-workspace/second-Journey/party SQLite assertions; forged identity/scope and invalid JWT fixtures rejected | `executed-uncommitted` | TLS, encrypted local storage, native credentials and compromised-service behavior are `not-validated`                           |
 | `TH-SYNC-002` / `MIT-SYNC-002` | explicit active hierarchy projection, narrow publication/replication grants, immutable rules config                                                       | `executed-uncommitted` | production RLS equivalence, rule administration, production schema and privileged-role review are `not-validated`               |
-| `TH-SYNC-003` / `MIT-SYNC-003` | synthetic singleton upload, digest-bound applied/conflict/denied receipts, current-grant serialization, idempotency retry and terminal queue outcomes | `executed-uncommitted` | production canonical command/UoW/policy equivalence, audited conflict UX and immutable evidence remain `not-validated`          |
-| `TH-SYNC-004` / `MIT-SYNC-004` | online user/workspace/Journey/party purge with stale-token fresh replicas and overlapping path preservation                                               | `executed-uncommitted` | permanently offline/hostile device, forensic deletion, tombstone retention, key purge and delayed reconnect are `not-validated` |
+| `TH-SYNC-003` / `MIT-SYNC-003` | synthetic singleton upload, incarnation/digest-bound applied/conflict/denied receipts, current-grant/retention serialization, idempotency retry and terminal queue outcomes | `executed-uncommitted` | production canonical command/UoW/policy equivalence, audited conflict UX and immutable evidence remain `not-validated`          |
+| `TH-SYNC-004` / `MIT-SYNC-004` | online hierarchical purge plus strict endpoint-time `P30D` payload/`P90D` graveyard boundaries, monotonic floor and stale-incarnation rejection | `executed-uncommitted` | trusted replica checkpoint, real quarantine/reset, permanently offline/hostile device, forensic/key deletion and delayed reconnect are `not-validated` |
 | `TH-SYNC-005` / `MIT-SYNC-005` | digest-pinned local self-host stack and exact FSL evidence                                                                                                | `executed`             | license acceptance, offline-after-pull run, restart persistence, upgrade/rollback and operational hardening are `not-validated` |
 | `TH-SYNC-006` / `MIT-SYNC-006` | excluded by first-slice non-goals                                                                                                                         | `not-validated`        | subscription/cardinality limits, rate limits, queue/conflict storms and backpressure                                            |
 
@@ -146,7 +175,7 @@ The production threat register remains correct at `not-implemented`/`designed` w
 
 1. Attach the commit-bound local run to an immutable review or CI evidence record and complete independent review of that immutable result.
 2. Repeat invalid-token and broader malformed-input abuse tests against the eventual selected production version; this slice covers only wrong audience, expiry and deterministic signature corruption.
-3. Implement and validate M3b against the selected hybrid policy: minimal graveyard retention through the server-time `P90D` connected-sync window, quarantine plus replica reset/full resync beyond the retained floor, delayed reconnect and UUID reuse, encrypted/revocation-safe bounded quarantine, and queue/conflict bounds with backpressure. Standalone local-only authority is exempt from the sync clock but remains gated by Issues #2/#9.
+3. Complete M3b-R2–R4 against the selected hybrid policy: server-registered replica identity and trusted checkpoint binding, encrypted/revocation-safe bounded quarantine, actual replica reset/full resync beyond `P90D` or the retained floor, delayed reconnect, and queue/conflict bounds with backpressure. Standalone local-only authority is exempt from the sync clock but remains gated by Issues #2/#9.
 4. Repeat after service restart and after image pulls with outbound network disabled.
 5. Validate supported Capacitor and Tauri routes separately; compilation is not runtime acceptance.
 6. Complete encryption/key-custody evidence under Issue #9.
