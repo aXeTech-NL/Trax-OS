@@ -62,14 +62,21 @@ fi
 if [[ -z "${PS8_POST_COMMIT_FAULT_SECRET:-}" ]]; then
   export PS8_POST_COMMIT_FAULT_SECRET='cleanup-only-not-a-runtime-secret-0000000000000000'
 fi
+rotation_env_file="$(dirname "$OWNER_FILE")/command-server-secrets.env"
+if [[ ! -f "$rotation_env_file" && -z "${PS8_REPLICA_ROTATION_SECRET:-}" ]]; then
+  export PS8_REPLICA_ROTATION_SECRET='cleanup-only-distinct-rotation-secret-000000000000'
+fi
 
 COMPOSE=(
   docker compose
   --project-name "$PROJECT"
   --env-file "$SPIKE_DIR/versions.env"
   --env-file "$SPIKE_DIR/.env.example"
-  -f "$SPIKE_DIR/compose.yaml"
 )
+if [[ -f "$rotation_env_file" ]]; then
+  COMPOSE+=(--env-file "$rotation_env_file")
+fi
+COMPOSE+=(-f "$SPIKE_DIR/compose.yaml")
 
 "${COMPOSE[@]}" down --volumes --remove-orphans
 rm -rf "$(dirname "$OWNER_FILE")"

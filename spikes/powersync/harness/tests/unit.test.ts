@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, open, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { generateKeyPair, jwtVerify, SignJWT } from "jose";
 import { assertAuthorizedReplica, pollUntil } from "../src/assertions.js";
-import { validateQueuedCrud, waitForInitialSync } from "../src/client.js";
+import { isReplicaResetRequired, ReplicaResetRequiredError, validateQueuedCrud, waitForInitialSync, writePrivateJsonAtomically } from "../src/client.js";
 import {
   commandDigest,
   parseCommandEnvelope,
   parseCommandResponse,
+  parseReplicaSessionSecret,
 } from "../src/command-protocol.js";
 import {
   validateEvidenceEntry,
@@ -151,9 +152,10 @@ test("experimental command protocol rejects authority, batches and mismatched re
     expectedRecordVersion: 1,
     payload: "bounded replacement",
   };
+  const binding = { replicaId: "78888888-8888-4888-8888-888888888888", replicaEpoch: 1 };
   const envelope = {
     spikeProtocol: 1,
-    deviceId: "telemetry",
+    ...binding,
     localTransactionId: "correlation",
     commands: [command],
   };
@@ -162,15 +164,58 @@ test("experimental command protocol rejects authority, batches and mismatched re
   assert.throws(() => parseCommandEnvelope({ ...envelope, commands: [{ ...command, workspaceId: ids.workspaces.one }] }), /authority is forbidden/);
   assert.throws(() => parseCommandEnvelope({ ...envelope, commands: [command, { ...command, commandId: "77777777-7777-4777-8777-777777777702" }] }), /exactly one command/);
   assert.throws(
-    () => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: "0".repeat(64), state: "applied", code: "applied", previousVersion: 1, currentVersion: 2, attemptNumber: 1 }] }, [command]),
+    () => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: "0".repeat(64), state: "applied", code: "applied", previousVersion: 1, currentVersion: 2, attemptNumber: 1 }] }, [command], binding),
     /digest mismatch/,
   );
-  assert.equal(commandDigest(command).length, 64);
+  assert.equal(commandDigest(command, binding).length, 64);
+  assert.notEqual(commandDigest(command, binding), commandDigest(command, { ...binding, replicaEpoch: 2 }));
   assert.notEqual(
-    commandDigest(command),
-    commandDigest({ ...command, resourceIncarnationId: "79999999-9999-4999-8999-999999999999" }),
+    commandDigest(command, binding),
+    commandDigest({ ...command, resourceIncarnationId: "79999999-9999-4999-8999-999999999999" }, binding),
   );
-  assert.doesNotThrow(() => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: commandDigest(command), state: "conflict", code: "stale_incarnation", previousVersion: 1, currentVersion: 1, attemptNumber: 1 }] }, [command]));
+  assert.doesNotThrow(() => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: commandDigest(command, binding), state: "conflict", code: "stale_incarnation", previousVersion: 1, currentVersion: 1, attemptNumber: 1 }] }, [command], binding));
+});
+
+test("replica lifecycle parsing binds a strict one-time secret and typed reset signal", () => {
+  const session = {
+    replicaId: "78888888-8888-4888-8888-888888888888",
+    replicaEpoch: 1,
+    credential: `r2_${Buffer.alloc(32, 7).toString("base64url")}`,
+  };
+  assert.deepEqual(parseReplicaSessionSecret(session), session);
+  assert.throws(() => parseReplicaSessionSecret({ ...session, replicaEpoch: 0 }), /positive safe integer/);
+  assert.throws(() => parseReplicaSessionSecret({ ...session, credential: `r2_${Buffer.alloc(31).toString("base64url")}` }), /32-byte secret/);
+  assert.throws(() => parseReplicaSessionSecret({ ...session, credential: `${session.credential}=`, extra: true }), /unknown fields/);
+  const reset = new ReplicaResetRequiredError();
+  assert.equal(isReplicaResetRequired(reset), true);
+  assert.equal(isReplicaResetRequired(new Error("replica_reset_required")), false);
+});
+
+test("private atomic sidecar failures remove payload-bearing temporary files", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "trax-ps8-private-write-"));
+  const target = path.join(directory, "state.json");
+  const renameFailure = (async () => { throw new Error("injected rename failure"); }) as typeof rename;
+  await assert.rejects(
+    writePrivateJsonAtomically(target, { payload: "MUST_NOT_REMAIN_IN_TMP" }, {
+      open, chmod, unlink, rename: renameFailure,
+    }),
+    /injected rename failure/,
+  );
+  assert.deepEqual(await readdir(directory), []);
+
+  const cleanupFailure = Object.assign(new Error("injected cleanup failure"), { code: "EACCES" });
+  await assert.rejects(
+    writePrivateJsonAtomically(target, { payload: "CLEANUP_FAILURE_MUST_SURFACE" }, {
+      open, chmod, rename: renameFailure,
+      unlink: (async () => { throw cleanupFailure; }) as typeof unlink,
+    }),
+    (error: unknown) => error instanceof AggregateError && error.errors.some((entry) => String(entry).includes("injected rename failure")) && error.errors.some((entry) => String(entry).includes("injected cleanup failure")),
+  );
+  for (const entry of await readdir(directory)) await unlink(path.join(directory, entry));
+
+  const clientSource = await readFile(path.resolve("src/client.ts"), "utf8");
+  assert.doesNotMatch(clientSource, /(?:FROM|INTO|UPDATE|DELETE\s+FROM)\s+ps_/i);
+  assert.doesNotMatch(clientSource, /ps_data_local__/i);
 });
 
 test("queue CRUD validation accepts only strict insert-only command PUTs", () => {

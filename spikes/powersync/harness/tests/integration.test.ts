@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -588,24 +588,75 @@ async function waitForAttempt(commandId: string): Promise<number> {
   return Number(body.attempts);
 }
 
-async function commandRequest(token: string | undefined, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${commandEndpoint}/spike/commands`, {
+interface TestReplicaSession { replicaId: string; replicaEpoch: number; credential: string }
+const directReplicaByToken = new Map<string, TestReplicaSession>();
+const replicaCredentialById = new Map<string, string>();
+async function replicaRequest(
+  token: string,
+  action: "register" | "challenge" | "ack" | "reset" | "reset/ack" | "classify",
+  body: Record<string, unknown>,
+  session?: TestReplicaSession,
+  credentialOverride?: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${commandEndpoint}/spike/replicas/${action}`, {
     method: "POST",
     headers: {
+      authorization: `Bearer ${token}`,
       "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...headers,
+      ...((credentialOverride ?? session?.credential) ? { "x-ps8-replica-credential": credentialOverride ?? session!.credential } : {}),
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(5_000),
   });
   return { status: response.status, body: JSON.parse(await response.text()) as Record<string, unknown> };
 }
+async function registerTestReplica(token: string): Promise<TestReplicaSession> {
+  const response = await replicaRequest(token, "register", {});
+  assert.equal(response.status, 201);
+  assert.equal(typeof response.body.replicaId, "string");
+  assert.equal(response.body.replicaEpoch, 1);
+  assert.equal(typeof response.body.credential, "string");
+  return response.body as unknown as TestReplicaSession;
+}
+async function challengeAndAck(token: string, session: TestReplicaSession): Promise<{ challengeId: string; targetSequence: number }> {
+  const challenge = await replicaRequest(token, "challenge", { replicaId: session.replicaId, replicaEpoch: session.replicaEpoch }, session);
+  assert.equal(challenge.status, 201);
+  assert.equal(challenge.body.checkpointProof, "client-observed-not-server-attested");
+  const result = { challengeId: String(challenge.body.challengeId), targetSequence: Number(challenge.body.targetSequence) };
+  const ack = await replicaRequest(token, "ack", { replicaId: session.replicaId, replicaEpoch: session.replicaEpoch, challengeId: result.challengeId }, session);
+  assert.deepEqual({ status: ack.status, proof: ack.body.checkpointProof }, { status: 200, proof: "client-observed-not-server-attested" });
+  return result;
+}
+async function commandRequest(token: string | undefined, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Record<string, unknown> }> {
+  const raw = body as Record<string, unknown>;
+  const selected = typeof raw.replicaId === "string"
+    ? { replicaId:raw.replicaId, replicaEpoch:Number(raw.replicaEpoch), credential:replicaCredentialById.get(raw.replicaId) }
+    : token ? directReplicaByToken.get(token) : undefined;
+  const bound = selected && !raw.replicaId ? { ...raw, replicaId:selected.replicaId, replicaEpoch:selected.replicaEpoch } : raw;
+  const response = await fetch(`${commandEndpoint}/spike/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(selected?.credential ? { "x-ps8-replica-credential": selected.credential } : {}),
+      ...headers,
+    },
+    body: JSON.stringify(bound),
+    signal: AbortSignal.timeout(5_000),
+  });
+  return { status: response.status, body: JSON.parse(await response.text()) as Record<string, unknown> };
+}
 
-function commandBody(command: { commandId: string; type: string; resourceId: string; resourceIncarnationId?: string; expectedRecordVersion: number; payload?: string }) {
+function rememberReplica(client: SpikeClient) {
+  const secret = client.testReplicaSecret(); assert.ok(secret); replicaCredentialById.set(secret.replicaId, secret.credential); return secret;
+}
+
+function commandBody(command: { commandId: string; type: string; resourceId: string; resourceIncarnationId?: string; expectedRecordVersion: number; payload?: string }, session?: { replicaId:string; replicaEpoch:number }) {
   const resourceIncarnationId = command.resourceIncarnationId ?? resourceIncarnations[command.resourceId];
   if (!resourceIncarnationId) throw new Error("Integration command requires a known resource incarnation.");
-  return { spikeProtocol: 1, deviceId: "integration-telemetry", localTransactionId: randomUUID(), commands: [{ ...command, resourceIncarnationId }] };
+  return { spikeProtocol: 1, ...(session ? { replicaId:session.replicaId, replicaEpoch:session.replicaEpoch } : {}), localTransactionId: randomUUID(), commands: [{ ...command, resourceIncarnationId }] };
 }
 
 async function waitForResult(client: SpikeClient, commandId: string) {
@@ -646,6 +697,12 @@ test(
       const tokens = {
         alice: await fetchToken("alice"), bob: await fetchToken("bob"), casey: await fetchToken("casey"), eve: await fetchToken("eve"),
       };
+      for (const principal of Object.keys(tokens) as Principal[]) {
+        const directClient = await openSpikeClient({ name:`direct-${principal}-${runId}`, runtimeDirectory, endpoint:powerSyncEndpoint, commandEndpoint, token:tokens[principal] });
+        clients.push(directClient);
+        const secret = directClient.testReplicaSecret(); assert.ok(secret);
+        directReplicaByToken.set(tokens[principal], secret); replicaCredentialById.set(secret.replicaId, secret.credential);
+      }
 
       const privilegeRows = await pool.query<{ role: string; resource_update: boolean; receipt_insert: boolean; clock_advance: boolean; retention_run: boolean; database_temp: boolean }>(
         `SELECT role,
@@ -783,6 +840,7 @@ test(
 
       const retryClient = await openSpikeClient({ name: `command-retry-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice, uploadFault: { mode: "post-commit-drop", secret: faultSecret } });
       clients.push(retryClient);
+      const retryReplica = rememberReplica(retryClient);
       const retryCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.sharedOne, expectedRecordVersion: 1, payload: "M3A_RETRY_RESULT" };
       await retryClient.queueCommands([retryCommand]);
       const retryResult = await waitForResult(retryClient, retryCommand.commandId);
@@ -795,7 +853,7 @@ test(
       const retryCounts = await pool.query("SELECT (SELECT count(*) FROM ps8_command_receipts WHERE command_id = $1) receipts, (SELECT count(*) FROM ps8_command_change_events WHERE command_id = $1) events, (SELECT version FROM resources WHERE id = $2) version", [retryCommand.commandId, retryCommand.resourceId]);
       assert.deepEqual({ receipts: Number(retryCounts.rows[0].receipts), events: Number(retryCounts.rows[0].events), version: Number(retryCounts.rows[0].version) }, { receipts: 1, events: 1, version: 2 });
 
-      const exactReplay = await commandRequest(tokens.alice, commandBody(retryCommand));
+      const exactReplay = await commandRequest(tokens.alice, commandBody(retryCommand, retryReplica));
       assert.equal(exactReplay.status, 200);
       assert.equal(((exactReplay.body.results as Array<Record<string, unknown>>)[0]?.code), "already_applied");
       for (const changed of [
@@ -803,7 +861,7 @@ test(
         { ...retryCommand, expectedRecordVersion: 2 },
         { ...retryCommand, type: "ps8.resource.soft_delete.v1", payload: undefined },
       ]) {
-        const changedReplay = await commandRequest(tokens.alice, commandBody(changed));
+        const changedReplay = await commandRequest(tokens.alice, commandBody(changed, retryReplica));
         assert.equal(changedReplay.status, 409);
         assert.equal(changedReplay.body.error, "idempotency_conflict");
       }
@@ -814,6 +872,7 @@ test(
         uploadFault: { mode: "post-commit-drop-barrier", secret: faultSecret },
       });
       clients.push(revokedRetryClient);
+      const revokedRetryReplica = rememberReplica(revokedRetryClient);
       const postCommitRevocationCommand = {
         commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
         resourceId: ids.resources.sharedTwo, expectedRecordVersion: 3,
@@ -842,7 +901,7 @@ test(
         [ids.users.eve, postCommitRevocationCommand.commandId],
       );
       assert.deepEqual(immutableAppliedReceipt.rows[0], appliedBeforeRevocation.rows[0], "derived denial mutated the durable applied receipt");
-      const changedRevokedReplay = await commandRequest(tokens.eve, commandBody({ ...postCommitRevocationCommand, payload: "M3B_CHANGED_REVOKED_REPLAY" }));
+      const changedRevokedReplay = await commandRequest(tokens.eve, commandBody({ ...postCommitRevocationCommand, payload: "M3B_CHANGED_REVOKED_REPLAY" }, revokedRetryReplica));
       assert.equal(changedRevokedReplay.status, 409);
       assert.equal(changedRevokedReplay.body.error, "idempotency_conflict");
       assert.deepEqual(
@@ -908,6 +967,7 @@ test(
       await pool.query("UPDATE journey_memberships SET active = false WHERE user_id = $1 AND journey_id = $2", [ids.users.bob, ids.journeys.one]);
       const deniedClient = await openSpikeClient({ name: `denied-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob });
       clients.push(deniedClient);
+      const deniedReplica = rememberReplica(deniedClient);
       const deniedCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.bravoPrivate, resourceIncarnationId: resourceIncarnations[ids.resources.bravoPrivate]!, expectedRecordVersion: 1, payload: "M3A_DENIED_MUST_NOT_APPLY" };
       await deniedClient.queueCommands([deniedCommand]);
       const deniedResult = await waitForResult(deniedClient, deniedCommand.commandId);
@@ -916,20 +976,19 @@ test(
       assert.ok(!(await deniedClient.readOptimisticResources()).some((row) => row.id === deniedCommand.commandId));
       const deniedReceipt = await pool.query("SELECT digest, result_state, result_code FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2", [ids.users.bob, deniedCommand.commandId]);
       assert.deepEqual({ state: deniedReceipt.rows[0]?.result_state, code: deniedReceipt.rows[0]?.result_code }, { state: "denied", code: "command_denied" });
-      await deniedClient.close();
-      clients.splice(clients.indexOf(deniedClient), 1);
       await pool.query("UPDATE journey_memberships SET active = true WHERE user_id = $1 AND journey_id = $2", [ids.users.bob, ids.journeys.one]);
-      const deniedReplayClient = await openSpikeClient({ name: `denied-replay-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob });
-      clients.push(deniedReplayClient);
-      await deniedReplayClient.queueCommands([deniedCommand]);
-      assert.equal((await waitForResult(deniedReplayClient, deniedCommand.commandId)).state, "denied");
+      await pollUntil("denied client grant restored", () => deniedClient.readRawResources(), (rows) => rows.some((row) => row.id === ids.resources.bravoPrivate), 30_000, 100);
+      const deniedReplay = await commandRequest(tokens.bob, commandBody(deniedCommand, deniedReplica));
+      assert.equal(deniedReplay.status, 200);
+      assert.equal((deniedReplay.body.results as Array<Record<string, unknown>>)[0]?.state, "denied");
       assert.equal((await pool.query("SELECT payload, version FROM resources WHERE id = $1", [ids.resources.bravoPrivate])).rows[0].payload, "MARKER_PARTY_BRAVO_PRIVATE");
       const afterDeniedCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.bravoPrivate, expectedRecordVersion: 1, payload: "M3A_AFTER_DENIED_REPLAY" };
-      await deniedReplayClient.queueCommands([afterDeniedCommand]);
-      assert.equal((await waitForResult(deniedReplayClient, afterDeniedCommand.commandId)).state, "applied");
+      await deniedClient.queueCommands([afterDeniedCommand]);
+      assert.equal((await waitForResult(deniedClient, afterDeniedCommand.commandId)).state, "applied");
 
       const deleteClient = await openSpikeClient({ name: `delete-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob });
       clients.push(deleteClient);
+      const deleteReplica = rememberReplica(deleteClient);
       const deleteCommand = { commandId: randomUUID(), type: "ps8.resource.soft_delete.v1" as const, resourceId: ids.resources.sharedOne, expectedRecordVersion: 2 };
       await deleteClient.queueCommands([deleteCommand]);
       assert.equal((await waitForResult(deleteClient, deleteCommand.commandId)).state, "applied");
@@ -945,7 +1004,7 @@ test(
 
       await pool.query("UPDATE journey_memberships SET active = false WHERE user_id = $1 AND journey_id = $2", [ids.users.bob, ids.journeys.one]);
       await pollUntil("tombstone revoked from Bob", () => deleteClient.readRawResources(), (rows) => !rows.some((row) => row.id === ids.resources.sharedOne), 30_000, 100);
-      assert.equal((await commandRequest(tokens.bob, commandBody(deleteCommand))).status, 403, "revoked replay returned historic receipt");
+      assert.equal((await commandRequest(tokens.bob, commandBody(deleteCommand, deleteReplica))).status, 403, "revoked replay returned historic receipt");
       await pool.query("UPDATE journey_memberships SET active = true WHERE user_id = $1 AND journey_id = $2", [ids.users.bob, ids.journeys.one]);
       await pollUntil("tombstone restored after grant reactivation", () => deleteClient.readRawResources(), (rows) => rows.some((row) => row.id === ids.resources.sharedOne && row.version === 3 && row.deleted_at !== null), 30_000, 100);
 
@@ -1049,6 +1108,8 @@ test(
       assert.equal((await pool.query("SELECT ps8_replica_reset_required('2026-01-01T00:00:00Z', 1) AS required")).rows[0].required, true);
       assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 1, retainedFloor: 2 });
       await pollUntil("expired tombstone leaves connected replica", () => deleteClient.readRawResources(), (rows) => !rows.some((row) => row.id === ids.resources.sharedOne), 30_000, 100);
+      const retentionClient = await openSpikeClient({ name:`retention-r1-${runId}`, runtimeDirectory, endpoint:powerSyncEndpoint, commandEndpoint, token:tokens.bob });
+      clients.push(retentionClient); const retentionReplica = rememberReplica(retentionClient);
       assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 0, retainedFloor: 2 });
       assert.equal((await pool.query("SELECT ps8_replica_reset_required(ps8_now(), 1) AS required")).rows[0].required, true);
 
@@ -1058,13 +1119,13 @@ test(
         resourceIncarnationId: resourceIncarnations[ids.resources.sharedOne]!,
         expectedRecordVersion: 3, payload: "M3B_PURGED_TARGET_MUST_NOT_APPLY",
       };
-      await deleteClient.queueCommands([purgedTargetCommand]);
-      const purgedTargetResult = await waitForResult(deleteClient, purgedTargetCommand.commandId);
+      await retentionClient.queueCommands([purgedTargetCommand]);
+      const purgedTargetResult = await waitForResult(retentionClient, purgedTargetCommand.commandId);
       assert.deepEqual(
         { state: purgedTargetResult.state, code: purgedTargetResult.result_code },
         { state: "denied", code: "command_denied" },
       );
-      await pollUntil("purged target terminal queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
+      await pollUntil("purged target terminal queue completion", () => retentionClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
       assert.deepEqual(
         (await pool.query("SELECT result_state, result_code FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2", [ids.users.bob, purgedTargetCommand.commandId])).rows[0],
         { result_state: "denied", result_code: "command_denied" },
@@ -1077,7 +1138,7 @@ test(
       );
       await pollUntil(
         "replacement incarnation converges",
-        () => deleteClient.readRawResources(),
+        () => retentionClient.readRawResources(),
         (rows) => rows.some((row) => row.id === ids.resources.sharedOne && row.resource_incarnation_id === replacementIncarnation && row.version === 3),
         30_000,
         100,
@@ -1088,19 +1149,19 @@ test(
         resourceIncarnationId: resourceIncarnations[ids.resources.sharedOne]!,
         expectedRecordVersion: 3, payload: "M3B_OLD_INCARNATION_MUST_NOT_APPLY",
       };
-      await deleteClient.queueCommands([oldIncarnationCommand]);
-      const oldIncarnationResult = await waitForResult(deleteClient, oldIncarnationCommand.commandId);
+      await retentionClient.queueCommands([oldIncarnationCommand]);
+      const oldIncarnationResult = await waitForResult(retentionClient, oldIncarnationCommand.commandId);
       assert.deepEqual(
         { state: oldIncarnationResult.state, code: oldIncarnationResult.result_code, currentVersion: oldIncarnationResult.current_version },
         { state: "conflict", code: "stale_incarnation", currentVersion: 3 },
       );
-      await pollUntil("stale incarnation queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
+      await pollUntil("stale incarnation queue completion", () => retentionClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
       const replacementBeforeProgress = await pool.query("SELECT resource_incarnation_id, version FROM resources WHERE id = $1", [ids.resources.sharedOne]);
       assert.deepEqual({ incarnation: replacementBeforeProgress.rows[0].resource_incarnation_id, version: Number(replacementBeforeProgress.rows[0].version) }, { incarnation: replacementIncarnation, version: 3 });
-      const oldIncarnationReplay = await commandRequest(tokens.bob, commandBody(oldIncarnationCommand));
+      const oldIncarnationReplay = await commandRequest(tokens.bob, commandBody(oldIncarnationCommand, retentionReplica));
       assert.equal(oldIncarnationReplay.status, 200);
       assert.equal((oldIncarnationReplay.body.results as Array<Record<string, unknown>>)[0]?.code, "stale_incarnation");
-      const changedIncarnationReplay = await commandRequest(tokens.bob, commandBody({ ...oldIncarnationCommand, resourceIncarnationId: replacementIncarnation }));
+      const changedIncarnationReplay = await commandRequest(tokens.bob, commandBody({ ...oldIncarnationCommand, resourceIncarnationId: replacementIncarnation }, retentionReplica));
       assert.equal(changedIncarnationReplay.status, 409);
       assert.equal(changedIncarnationReplay.body.error, "idempotency_conflict");
 
@@ -1109,10 +1170,10 @@ test(
         resourceId: ids.resources.sharedOne, resourceIncarnationId: replacementIncarnation,
         expectedRecordVersion: 3, payload: "M3B_AFTER_INCARNATION_CONFLICT",
       };
-      await deleteClient.queueCommands([afterIncarnationConflict]);
+      await retentionClient.queueCommands([afterIncarnationConflict]);
       assert.deepEqual(
-        { state: (await waitForResult(deleteClient, afterIncarnationConflict.commandId)).state,
-          queue: await pollUntil("post-incarnation progress queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100) },
+        { state: (await waitForResult(retentionClient, afterIncarnationConflict.commandId)).state,
+          queue: await pollUntil("post-incarnation progress queue completion", () => retentionClient.uploadQueueCount(), (count) => count === 0, 10_000, 100) },
         { state: "applied", queue: 0 },
       );
 
@@ -1123,8 +1184,8 @@ test(
         resourceIncarnationId: resourceIncarnations[ids.resources.bravoPrivate]!,
         expectedRecordVersion: 2,
       };
-      await deleteClient.queueCommands([extendedDelete]);
-      assert.equal((await waitForResult(deleteClient, extendedDelete.commandId)).state, "applied");
+      await retentionClient.queueCommands([extendedDelete]);
+      assert.equal((await waitForResult(retentionClient, extendedDelete.commandId)).state, "applied");
       const extendedMarker = await pool.query("SELECT deletion_sequence, deleted_at FROM ps8_resource_graveyard WHERE resource_id = $1", [ids.resources.bravoPrivate]);
       const extendedSequence = Number(extendedMarker.rows[0].deletion_sequence);
       const markerTime = "(SELECT deleted_at FROM ps8_resource_graveyard WHERE resource_id = $1)";
@@ -1265,6 +1326,276 @@ test(
         { markersPurged: 1, retainedFloor: higherSequence + 1 },
       );
 
+      const r2StartedAt = new Date().toISOString();
+
+      // Registration returns one server-generated 256-bit credential. Only its
+      // digest is retained, and every invalid binding has the same response.
+      const registration = await registerTestReplica(tokens.alice);
+      assert.match(registration.credential, /^r2_[A-Za-z0-9_-]{43}$/);
+      assert.equal(Buffer.from(registration.credential.slice(3), "base64url").length, 32);
+      const registrationRow = await pool.query<{ credential_digest: string }>(
+        "SELECT credential_digest FROM ps8_replicas WHERE replica_id = $1",
+        [registration.replicaId],
+      );
+      assert.equal(registrationRow.rows[0]?.credential_digest, createHash("sha256").update(registration.credential).digest("hex"));
+      assert.notEqual(registrationRow.rows[0]?.credential_digest, registration.credential);
+      assert.equal(Number((await pool.query(
+        "SELECT count(*) AS count FROM ps8_replicas AS replica WHERE row_to_json(replica)::text LIKE '%' || $1 || '%'",
+        [registration.credential],
+      )).rows[0].count), 0);
+
+      const disabled = await registerTestReplica(tokens.alice);
+      await pool.query("UPDATE ps8_replicas SET disabled_at = ps8_now() WHERE replica_id = $1", [disabled.replicaId]);
+      const unknownReplica = { replicaId: randomUUID(), replicaEpoch: 1, credential: `r2_${randomBytes(32).toString("base64url")}` };
+      const invalidReplicaResponses = await Promise.all([
+        replicaRequest(tokens.alice, "challenge", { replicaId: registration.replicaId, replicaEpoch: 1 }, registration, `r2_${randomBytes(32).toString("base64url")}`),
+        replicaRequest(tokens.bob, "challenge", { replicaId: registration.replicaId, replicaEpoch: 1 }, registration),
+        replicaRequest(tokens.alice, "challenge", { replicaId: registration.replicaId, replicaEpoch: 2 }, registration),
+        replicaRequest(tokens.alice, "challenge", { replicaId: disabled.replicaId, replicaEpoch: 1 }, disabled),
+        replicaRequest(tokens.alice, "challenge", { replicaId: unknownReplica.replicaId, replicaEpoch: 1 }, unknownReplica),
+      ]);
+      for (const candidate of invalidReplicaResponses) {
+        assert.deepEqual(candidate, { status: 403, body: { error: "invalid_replica" } });
+      }
+
+      const firstChallenge = await replicaRequest(tokens.alice, "challenge", { replicaId: registration.replicaId, replicaEpoch: 1 }, registration);
+      assert.equal(firstChallenge.status, 201);
+      assert.equal(firstChallenge.body.checkpointProof, "client-observed-not-server-attested");
+      const replacementChallenge = await replicaRequest(tokens.alice, "challenge", { replicaId: registration.replicaId, replicaEpoch: 1 }, registration);
+      assert.equal(replacementChallenge.status, 201);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_replica_challenges WHERE replica_id=$1", [registration.replicaId])).rows[0].count), 1);
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "ack", { replicaId:registration.replicaId, replicaEpoch:1, challengeId:firstChallenge.body.challengeId }, registration),
+        { status: 409, body: { error: "checkpoint_ack_rejected" } },
+      );
+      const firstAckBody = { replicaId: registration.replicaId, replicaEpoch: 1, challengeId: replacementChallenge.body.challengeId };
+      assert.equal((await replicaRequest(tokens.alice, "ack", firstAckBody, registration)).status, 200);
+      assert.deepEqual(await replicaRequest(tokens.alice, "ack", firstAckBody, registration), { status: 409, body: { error: "checkpoint_ack_rejected" } });
+
+      const expiring = await registerTestReplica(tokens.alice);
+      const expiringChallenge = await replicaRequest(tokens.alice, "challenge", { replicaId: expiring.replicaId, replicaEpoch: 1 }, expiring);
+      assert.equal(expiringChallenge.status, 201);
+      await pool.query("SELECT ps8_test_set_time(ps8_now() + interval '5 minutes 1 microsecond')");
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "ack", { replicaId: expiring.replicaId, replicaEpoch: 1, challengeId: expiringChallenge.body.challengeId }, expiring),
+        { status: 409, body: { error: "checkpoint_ack_rejected" } },
+      );
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "ack", { replicaId: registration.replicaId, replicaEpoch: 2, challengeId: firstChallenge.body.challengeId }, registration),
+        { status: 403, body: { error: "invalid_replica" } },
+      );
+
+      const belowFloor = await registerTestReplica(tokens.alice);
+      const belowFloorChallenge = await replicaRequest(tokens.alice, "challenge", { replicaId: belowFloor.replicaId, replicaEpoch: 1 }, belowFloor);
+      const floorResource = randomUUID();
+      await pool.query(
+        `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+         VALUES ($1, $2, $3, $4, 'journey', NULL, 'M3B_R2_FLOOR', 1)`,
+        [floorResource, randomUUID(), ids.workspaces.one, ids.journeys.one],
+      );
+      await pool.query("UPDATE resources SET deleted_at = ps8_now(), version = 2 WHERE id = $1", [floorResource]);
+      await pool.query("UPDATE ps8_resource_graveyard SET deleted_at = ps8_now() - interval '120 days 1 microsecond' WHERE resource_id = $1", [floorResource]);
+      assert.equal((await maintenance()).markersPurged, 1);
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "ack", { replicaId: belowFloor.replicaId, replicaEpoch: 1, challengeId: belowFloorChallenge.body.challengeId }, belowFloor),
+        { status: 409, body: { error: "checkpoint_ack_rejected" } },
+      );
+
+      // Two current replicas prove exact P90D acceptance, +1 microsecond
+      // rejection and per-replica rather than global epoch rotation.
+      const r2Resource = randomUUID();
+      const r2Incarnation = randomUUID();
+      await pool.query(
+        `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+         VALUES ($1, $2, $3, $4, 'journey', NULL, 'M3B_R2_COMMAND', 1)`,
+        [r2Resource, r2Incarnation, ids.workspaces.one, ids.journeys.one],
+      );
+      const r2AClient = await openSpikeClient({ name: `r2-a-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice });
+      const r2BClient = await openSpikeClient({ name: `r2-b-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice });
+      clients.push(r2AClient, r2BClient);
+      const r2A = rememberReplica(r2AClient);
+      const r2B = rememberReplica(r2BClient);
+      const aAckTime = "(SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id = $1)";
+      await pool.query(`SELECT ps8_test_set_time(${aAckTime} + interval '90 days')`, [r2A.replicaId]);
+      await challengeAndAck(tokens.alice, r2B);
+      const exactP90Command = { commandId: randomUUID(), type: "ps8.resource.update.v1", resourceId: r2Resource, resourceIncarnationId: r2Incarnation, expectedRecordVersion: 1, payload: "M3B_R2_EXACT_P90" };
+      assert.equal((await commandRequest(tokens.alice, commandBody(exactP90Command, r2A))).status, 200);
+      await pool.query(`SELECT ps8_test_set_time(${aAckTime} + interval '90 days 1 microsecond')`, [r2A.replicaId]);
+      const r2StaleCommand = { ...exactP90Command, commandId: randomUUID(), expectedRecordVersion: 2, payload: "M3B_R2_STALE_MUST_NOT_APPLY" };
+      const beforeStale = await pool.query(
+        "SELECT version, payload, (SELECT count(*) FROM ps8_command_receipts WHERE command_id=$2) receipts, (SELECT count(*) FROM ps8_command_change_events WHERE command_id=$2) events FROM resources WHERE id=$1",
+        [r2Resource, r2StaleCommand.commandId],
+      );
+      assert.deepEqual(await commandRequest(tokens.alice, commandBody(r2StaleCommand, r2A)), { status: 428, body: { error: "replica_reset_required" } });
+      const afterStale = await pool.query(
+        "SELECT version, payload, (SELECT count(*) FROM ps8_command_receipts WHERE command_id=$2) receipts, (SELECT count(*) FROM ps8_command_change_events WHERE command_id=$2) events FROM resources WHERE id=$1",
+        [r2Resource, r2StaleCommand.commandId],
+      );
+      assert.deepEqual(afterStale.rows[0], beforeStale.rows[0]);
+      const bCurrentCommand = { ...r2StaleCommand, commandId: randomUUID(), payload: "M3B_R2_B_REMAINS_CURRENT" };
+      assert.equal((await commandRequest(tokens.alice, commandBody(bCurrentCommand, r2B))).status, 200);
+
+      const resetARequestId = randomUUID();
+      const resetABody = { replicaId: r2A.replicaId, replicaEpoch: r2A.replicaEpoch, resetRequestId:resetARequestId };
+      const resetAResponse = await replicaRequest(tokens.alice, "reset", resetABody, r2A);
+      assert.equal(resetAResponse.status, 200);
+      const resetAReplay = await replicaRequest(tokens.alice, "reset", resetABody, r2A);
+      assert.deepEqual(resetAReplay, resetAResponse);
+      const r2AAfterReset = resetAResponse.body as unknown as TestReplicaSession;
+      assert.deepEqual({ id: r2AAfterReset.replicaId, epoch: r2AAfterReset.replicaEpoch }, { id: r2A.replicaId, epoch: 2 });
+      assert.notEqual(r2AAfterReset.credential, r2A.credential);
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "reset", { ...resetABody, resetRequestId:randomUUID() }, r2A),
+        { status:403, body:{ error:"invalid_replica" } },
+      );
+      assert.equal((await replicaRequest(tokens.alice, "reset/ack", { replicaId:r2AAfterReset.replicaId, replicaEpoch:r2AAfterReset.replicaEpoch, resetRequestId:resetARequestId }, r2AAfterReset)).status, 200);
+      assert.equal((await replicaRequest(tokens.alice, "reset/ack", { replicaId:r2AAfterReset.replicaId, replicaEpoch:r2AAfterReset.replicaEpoch, resetRequestId:resetARequestId }, r2AAfterReset)).status, 200);
+      assert.deepEqual(
+        await commandRequest(tokens.alice, commandBody({ ...r2StaleCommand, commandId: randomUUID(), expectedRecordVersion: 3 }, r2A), { "x-ps8-replica-credential": r2A.credential }),
+        { status: 403, body: { error: "invalid_replica" } },
+      );
+      assert.equal((await commandRequest(tokens.alice, commandBody({ ...r2StaleCommand, commandId: randomUUID(), expectedRecordVersion: 3, payload: "M3B_R2_B_AFTER_A_RESET" }, r2B))).status, 200);
+      replicaCredentialById.set(r2AAfterReset.replicaId, r2AAfterReset.credential);
+      await challengeAndAck(tokens.alice, r2AAfterReset);
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1) + interval '90 days 1 microsecond')", [r2AAfterReset.replicaId]);
+      const r2RaceCommand = { ...r2StaleCommand, commandId: randomUUID(), expectedRecordVersion: 4, payload: "M3B_R2_RESET_RACE_MUST_NOT_APPLY" };
+      const raceResetRequestId = randomUUID();
+      const [raceUpload, raceReset] = await Promise.all([
+        commandRequest(tokens.alice, commandBody(r2RaceCommand, r2AAfterReset)),
+        replicaRequest(tokens.alice, "reset", { replicaId: r2AAfterReset.replicaId, replicaEpoch: r2AAfterReset.replicaEpoch, resetRequestId:raceResetRequestId }, r2AAfterReset),
+      ]);
+      assert.equal(raceReset.status, 200);
+      const raceResetSession = raceReset.body as unknown as TestReplicaSession;
+      assert.equal((await replicaRequest(tokens.alice, "reset/ack", { replicaId:raceResetSession.replicaId, replicaEpoch:raceResetSession.replicaEpoch, resetRequestId:raceResetRequestId }, raceResetSession)).status, 200);
+      assert.ok(raceUpload.status === 403 || raceUpload.status === 428);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=$1", [r2RaceCommand.commandId])).rows[0].count), 0);
+      assert.equal((await pool.query("SELECT payload FROM resources WHERE id=$1", [r2Resource])).rows[0].payload, "M3B_R2_B_AFTER_A_RESET");
+
+      // Honest-client reset uses only public PowerSync lifecycle methods. The
+      // application sidecar is logical plaintext quarantine (mode 0600), not
+      // encryption or forensic deletion evidence.
+      await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2", [ids.users.alice, ids.parties.alpha]);
+      const quarantineResources = {
+        authorized: { id: randomUUID(), incarnation: randomUUID(), audience: "journey", party: null, payload: "M3B_R2_Q_AUTH" },
+        revoked: { id: randomUUID(), incarnation: randomUUID(), audience: "party", party: ids.parties.alpha, payload: "M3B_R2_Q_REVOKED" },
+        replaced: { id: randomUUID(), incarnation: randomUUID(), audience: "journey", party: null, payload: "M3B_R2_Q_REPLACED" },
+      } as const;
+      for (const resource of Object.values(quarantineResources)) {
+        await pool.query(
+          `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version) VALUES ($1,$2,$3,$4,$5,$6,$7,1)`,
+          [resource.id, resource.incarnation, ids.workspaces.one, ids.journeys.one, resource.audience, resource.party, resource.payload],
+        );
+      }
+      const resetClient = await openSpikeClient({ name: `r2-quarantine-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice, uploadFault: { mode: "pre-commit-500", secret: faultSecret } });
+      clients.push(resetClient);
+      assert.equal((await stat(resetClient.applicationStateSidecarPath())).mode & 0o777, 0o600);
+      assert.equal((await stat(path.dirname(resetClient.applicationStateSidecarPath()))).mode & 0o777, 0o700);
+      const resetSession = rememberReplica(resetClient);
+      const quarantineCommands = Object.entries(quarantineResources).map(([key, resource]) => ({
+        key, commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: resource.id,
+        resourceIncarnationId: resource.incarnation, expectedRecordVersion: 1, payload: `M3B_R2_PENDING_${key.toUpperCase()}`,
+      }));
+      await resetClient.queueCommands([quarantineCommands[0]!]);
+      await waitForAttempt(quarantineCommands[0]!.commandId);
+      await resetClient.queueCommands([quarantineCommands[1]!]);
+      await resetClient.queueCommands([quarantineCommands[2]!]);
+      await pollUntil("three pending reset commands", () => resetClient.uploadQueueCount(), (count) => count === 3, 10_000, 50);
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1) + interval '90 days 1 microsecond')", [resetSession.replicaId]);
+      resetClient.setUploadFault(undefined);
+      await pollUntil("client receives reset required", async () => resetClient.resetRequired(), (value) => value, 15_000, 50);
+      assert.equal(await resetClient.uploadQueueCount(), 3);
+      assert.equal((await resetClient.readOptimisticResources()).length, 3);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=ANY($1::uuid[])", [quarantineCommands.map((command) => command.commandId)])).rows[0].count), 0);
+
+      const replacementAfterReset = randomUUID();
+      await assert.rejects(
+        resetClient.performReplicaReset({
+          resetPostCommitDropSecret: faultSecret,
+          async afterQuarantineWritten(sidecarPath) {
+            assert.equal((await stat(sidecarPath)).mode & 0o777, 0o600);
+            const sidecar = await readFile(sidecarPath, "utf8");
+            assert.ok(!sidecar.includes(resetSession.credential));
+            await pool.query("UPDATE party_memberships SET active=false WHERE user_id=$1 AND party_id=$2", [ids.users.alice, ids.parties.alpha]);
+            await pool.query("DELETE FROM resources WHERE id=$1", [quarantineResources.replaced.id]);
+            await pool.query(
+              `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version) VALUES ($1,$2,$3,$4,'journey',NULL,'M3B_R2_REPLACEMENT',1)`,
+              [quarantineResources.replaced.id, replacementAfterReset, ids.workspaces.one, ids.journeys.one],
+            );
+          },
+          async afterSessionPersisted(resetPath) {
+            assert.equal((await stat(resetPath)).mode & 0o777, 0o600);
+            throw new Error("injected failure after session persistence");
+          },
+        }),
+        /injected failure after session persistence/,
+      );
+      assert.equal(await resetClient.uploadQueueCount(), 3);
+      assert.equal((await resetClient.readOptimisticResources()).length, 3);
+      assert.equal((await readdir(path.dirname(resetClient.quarantineSidecarPath()))).filter((entry) => entry.endsWith(".tmp")).length, 0);
+      await assert.rejects(
+        resetClient.performReplicaReset({ async afterClear(resetPath) {
+          assert.equal((await stat(resetPath)).mode & 0o777, 0o600);
+          throw new Error("injected failure after destructive clear");
+        } }),
+        /injected failure after destructive clear/,
+      );
+      assert.deepEqual(
+        await replicaRequest(tokens.alice, "challenge", { replicaId:resetSession.replicaId, replicaEpoch:resetSession.replicaEpoch }, resetSession),
+        { status:403, body:{ error:"invalid_replica" } },
+      );
+      assert.equal((await readdir(path.dirname(resetClient.quarantineSidecarPath()))).filter((entry) => entry.endsWith(".tmp")).length, 0);
+      await resetClient.performReplicaReset();
+      const recoveredResetSession = resetClient.testReplicaSecret()!;
+      assert.equal(recoveredResetSession.replicaId, resetSession.replicaId);
+      assert.equal(recoveredResetSession.replicaEpoch, resetSession.replicaEpoch + 1);
+      assert.notEqual(recoveredResetSession.credential, resetSession.credential);
+      const recoveredServerState = (await pool.query<{ previous_credential_digest:string|null; staged_reset_request_id:string|null; plaintext_count:string }>(
+        `SELECT previous_credential_digest, staged_reset_request_id,
+          (SELECT count(*) FROM ps8_replicas AS candidate WHERE row_to_json(candidate)::text LIKE '%' || $2 || '%') AS plaintext_count
+          FROM ps8_replicas WHERE replica_id=$1`, [resetSession.replicaId, recoveredResetSession.credential])).rows[0]!;
+      assert.deepEqual(recoveredServerState, { previous_credential_digest:null, staged_reset_request_id:null, plaintext_count:"0" });
+      assert.equal((await readdir(path.dirname(resetClient.quarantineSidecarPath()))).filter((entry) => entry.endsWith(".tmp") || entry.endsWith(".reset.json")).length, 0);
+      const quarantine = await resetClient.readQuarantinedCommands();
+      assert.equal(quarantine.length, 3, `unexpected quarantine resources: ${JSON.stringify(quarantine.map((entry) => entry.resource_id))}`);
+      const quarantineByResource = new Map(quarantine.map((entry) => [entry.resource_id, entry]));
+      assert.deepEqual(
+        { state: quarantineByResource.get(quarantineCommands[0]!.resourceId)?.state, exportable: quarantineByResource.get(quarantineCommands[0]!.resourceId)?.exportable, payload: quarantineByResource.get(quarantineCommands[0]!.resourceId)?.payload },
+        { state: "pending_review", exportable: 1, payload: quarantineCommands[0]!.payload },
+      );
+      for (const command of quarantineCommands.slice(1)) {
+        assert.deepEqual(
+          { state: quarantineByResource.get(command.resourceId)?.state, exportable: quarantineByResource.get(command.resourceId)?.exportable, payload: quarantineByResource.get(command.resourceId)?.payload },
+          { state: "invalidated", exportable: 0, payload: null },
+        );
+      }
+      assert.equal(await resetClient.uploadQueueCount(), 0);
+      assert.equal((await resetClient.readOptimisticResources()).length, 0);
+      assert.equal((await resetClient.replicaSession())?.resetCount, 1);
+      assert.equal((await stat(resetClient.quarantineSidecarPath())).mode & 0o777, 0o600);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=ANY($1::uuid[])", [quarantineCommands.map((command) => command.commandId)])).rows[0].count), 0);
+      assert.deepEqual(
+        (await pool.query("SELECT id,payload,version FROM resources WHERE id=ANY($1::uuid[]) ORDER BY id", [Object.values(quarantineResources).map((resource) => resource.id)])).rows.map((row) => ({ id: row.id, payload: row.payload, version: Number(row.version) })),
+        [
+          { id: quarantineResources.authorized.id, payload: quarantineResources.authorized.payload, version: 1 },
+          { id: quarantineResources.revoked.id, payload: quarantineResources.revoked.payload, version: 1 },
+          { id: quarantineResources.replaced.id, payload: "M3B_R2_REPLACEMENT", version: 1 },
+        ].sort((left, right) => left.id.localeCompare(right.id)),
+      );
+      const postResetReplica = await resetClient.readRawResources();
+      assert.ok(postResetReplica.some((row) => row.id === quarantineResources.authorized.id && row.resource_incarnation_id === quarantineResources.authorized.incarnation));
+      assert.ok(!postResetReplica.some((row) => row.id === quarantineResources.revoked.id));
+      assert.ok(postResetReplica.some((row) => row.id === quarantineResources.replaced.id && row.resource_incarnation_id === replacementAfterReset));
+      await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2", [ids.users.alice, ids.parties.alpha]);
+
+      const beforeLimit = Number((await pool.query("SELECT count(*) AS count FROM ps8_replicas WHERE user_id=$1", [ids.users.alice])).rows[0].count);
+      assert.ok(beforeLimit <= 16);
+      for (let index = beforeLimit; index < 16; index += 1) await registerTestReplica(tokens.alice);
+      assert.deepEqual(await replicaRequest(tokens.alice, "register", {}), { status:429, body:{ error:"replica_limit_reached" } });
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_replicas WHERE user_id=$1", [ids.users.alice])).rows[0].count), 16);
+      assert.ok(Number((await pool.query(`SELECT COALESCE(max(per_replica),0) AS maximum FROM (
+        SELECT count(*) AS per_replica FROM ps8_replica_challenges GROUP BY replica_id, replica_epoch
+      ) AS bounded`)).rows[0].maximum) <= 1);
+
       const withM3a = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>;
       await writeFile(target, `${JSON.stringify({ ...withM3a, experimentalM3bR1: {
         status: "executed-uncommitted",
@@ -1314,6 +1645,63 @@ test(
         ],
         sanitized: true,
       } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+
+      const withR1 = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>;
+      await writeFile(target, `${JSON.stringify({ ...withR1, experimentalM3bR2: {
+        status: "executed-uncommitted",
+        startedAt: r2StartedAt,
+        replicaCredentialBinding: "server-generated-digest-only",
+        epochScope: "per-replica",
+        checkpointProof: "client-observed-not-server-attested",
+        actualResetAndFullResync: true,
+        quarantineEncryption: "not-validated",
+        outcomes: {
+          registrationSecretBytes: 32,
+          plaintextCredentialsPersisted: 0,
+          genericInvalidReplicaRejections: invalidReplicaResponses.length,
+          challengeReplayCode: "checkpoint_ack_rejected",
+          expiredChallengeCode: "checkpoint_ack_rejected",
+          belowFloorChallengeCode: "checkpoint_ack_rejected",
+          exactP90Command: "applied",
+          afterP90CommandHttpStatus: 428,
+          staleMutationCount: 0,
+          credentialRotations: 3,
+          idempotentResetReplayRecoveredExactSession: true,
+          postCommitResetResponseDropRecovered: true,
+          preClearSessionPersistenceRecovery: true,
+          postClearFullResyncRecovery: true,
+          oldCredentialRetiredAfterResetAck: true,
+          serverPlaintextRotatedCredentialsPersisted: 0,
+          replicaLimitPerUser: 16,
+          registrationLimitHttpStatus: 429,
+          maximumChallengesPerReplicaEpoch: 1,
+          payloadBearingTemporaryFilesRetained: 0,
+          unaffectedReplicaCommandsApplied: 2,
+          resetRaceCommandStatus: raceUpload.status,
+          resetRaceMutationCount: 0,
+          quarantinedCommands: quarantine.length,
+          pendingReviewCommands: quarantine.filter((entry) => entry.state === "pending_review").length,
+          invalidatedCommands: quarantine.filter((entry) => entry.state === "invalidated").length,
+          autoRequeuedCommands: await resetClient.uploadQueueCount(),
+          retainedOverlays: (await resetClient.readOptimisticResources()).length,
+          applicationStateSidecarMode: "0600",
+          applicationStateParentMode: "0700",
+          powerSyncInternalSqlReferences: 0,
+          quarantineSidecarMode: "0600",
+          quarantineSidecarRetainedForReview: true,
+          revokedOrReplacedPayloadsRetained: quarantine.filter((entry) => entry.state === "invalidated" && entry.payload !== null).length,
+        },
+        unvalidated: [
+          "server-attested-powersync-checkpoint-completion",
+          "quarantine-encryption-and-forensic-deletion",
+          "cross-process-restart-and-offline-after-pull",
+          "request-rate-limits-and-command-queue-storm-backpressure",
+          "native-runtime",
+        ],
+        sanitized: true,
+      } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      const retainedObservation = await readFile(target, "utf8");
+      assert.ok(!/r2_[A-Za-z0-9_-]{43}/.test(retainedObservation));
     } finally {
       await closeAllAndPool(clients, pool);
     }

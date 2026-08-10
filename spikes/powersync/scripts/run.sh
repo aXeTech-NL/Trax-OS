@@ -64,6 +64,11 @@ console.log(JSON.stringify(Object.fromEntries(['alice','bob','casey','eve'].map(
 NODE
 )"
 export PS8_POST_COMMIT_FAULT_SECRET="$(node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))")"
+replica_rotation_secret="$(node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))")"
+if [[ "$replica_rotation_secret" == "$PS8_POST_COMMIT_FAULT_SECRET" ]]; then
+  echo "Per-run fault and replica-rotation secrets must be distinct." >&2
+  exit 2
+fi
 
 RUN_DIRECTORY="$SPIKE_DIR/.runtime/$PS8_RUN_ID"
 EVIDENCE_DIRECTORY="$SPIKE_DIR/.evidence/$PS8_RUN_ID"
@@ -123,8 +128,12 @@ print(digest.hexdigest())
 PY
 )"
 mkdir -p "$RUN_DIRECTORY" "$EVIDENCE_DIRECTORY"
+chmod 700 "$RUN_DIRECTORY" "$EVIDENCE_DIRECTORY"
 printf '%s|%s' "$COMPOSE_PROJECT_NAME" "$PS8_RUN_ID" > "$PS8_OWNER_FILE"
 chmod 600 "$PS8_OWNER_FILE"
+export PS8_REPLICA_ROTATION_ENV_FILE="$RUN_DIRECTORY/command-server-secrets.env"
+printf 'PS8_REPLICA_ROTATION_SECRET=%s\n' "$replica_rotation_secret" > "$PS8_REPLICA_ROTATION_ENV_FILE"
+chmod 600 "$PS8_REPLICA_ROTATION_ENV_FILE"
 
 # Evidence permissions are an enforced wrapper invariant, independent of the
 # caller's umask. Reject symbolic/special entries rather than silently retaining
@@ -160,11 +169,28 @@ NODE
 }
 enforce_evidence_permissions
 
+assert_no_replica_credentials() {
+  if grep -R -E -q --binary-files=without-match 'r2_[A-Za-z0-9_-]{43}' "$@"; then
+    echo "Replica credential plaintext was found in retained evidence or service logs." >&2
+    return 1
+  fi
+}
+
+assert_no_rotation_secret() {
+  local rotation_secret
+  rotation_secret="${replica_rotation_secret}"
+  if grep -R -F -q --binary-files=without-match "$rotation_secret" "$@"; then
+    echo "Replica rotation secret was found outside the command-server secret input." >&2
+    return 1
+  fi
+}
+
 COMPOSE=(
   docker compose
   --project-name "$COMPOSE_PROJECT_NAME"
   --env-file "$SPIKE_DIR/versions.env"
   --env-file "$SPIKE_DIR/.env.example"
+  --env-file "$PS8_REPLICA_ROTATION_ENV_FILE"
   -f "$SPIKE_DIR/compose.yaml"
 )
 
@@ -223,6 +249,8 @@ process.stdin.on("end", () => {
     process.env.PS8_POST_COMMIT_FAULT_SECRET,
     process.env.PS8_POSTGRES_PASSWORD,
   ].filter(Boolean);
+  const rotationLine = require("node:fs").readFileSync(process.env.PS8_REPLICA_ROTATION_ENV_FILE, "utf8").trim();
+  secrets.push(rotationLine.slice(rotationLine.indexOf("=") + 1));
   for (const secret of secrets) transcript = transcript.replaceAll(secret, "[redacted-secret]");
   transcript = transcript.replace(/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[redacted-jwt]");
   process.stdout.write(transcript);
@@ -234,6 +262,12 @@ if [[ "$integration_status" != "0" ]]; then
   echo "Issue #8 integration failed; sanitized transcript retained at $INTEGRATION_TRANSCRIPT." >&2
   exit "$integration_status"
 fi
+SERVICE_LOG="$RUN_DIRECTORY/service.log"
+"${COMPOSE[@]}" logs --no-color > "$SERVICE_LOG"
+chmod 600 "$SERVICE_LOG"
+assert_no_replica_credentials "$EVIDENCE_DIRECTORY" "$SERVICE_LOG"
+assert_no_rotation_secret "$EVIDENCE_DIRECTORY" "$SERVICE_LOG"
+rm -f "$SERVICE_LOG"
 
 CONTEXT_FILE="$EVIDENCE_DIRECTORY/run-context.json"
 node - \
@@ -306,11 +340,13 @@ PS8_EVIDENCE_STATE="executed-uncommitted" \
 PS8_EVIDENCE_COMMAND="$PS8_WRAPPER_COMMAND" \
 PS8_EVIDENCE_EXECUTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 PS8_EVIDENCE_EXIT_CODE=0 \
-PS8_EVIDENCE_DETAILS="Pinned npm 10 static/unit checks and the real isolated PowerSync service completed prior scoped-download/revocation assertions plus experimental insert-only command upload, idempotency, optimistic conflict, reconciliation and tombstone assertions. Destructive cleanup succeeded before this non-immutable candidate observation was recorded." \
+PS8_EVIDENCE_DETAILS="Pinned npm 10 static/unit checks and the real isolated PowerSync service completed scoped download/revocation, experimental command/reconciliation, bounded retention/incarnation and honest-client registered-replica reset/quarantine assertions. Checkpoint completion remains client-observed rather than server-attested; quarantine encryption and forensic deletion are not validated. Destructive cleanup succeeded before this non-immutable candidate observation was recorded." \
 PS8_EVIDENCE_CONTEXT_FILE="$CONTEXT_FILE" \
 PS8_EVIDENCE_OBSERVATIONS_FILE="$EVIDENCE_DIRECTORY/integration-observations.json" \
 PS8_EVIDENCE_DIR="$EVIDENCE_DIRECTORY" \
 "${NPM10[@]}" run record:evidence --prefix "$HARNESS_DIR"
 enforce_evidence_permissions
+assert_no_replica_credentials "$EVIDENCE_DIRECTORY"
+assert_no_rotation_secret "$EVIDENCE_DIRECTORY"
 
 printf 'Issue #8 candidate evidence retained under %s\n' "$EVIDENCE_DIRECTORY"

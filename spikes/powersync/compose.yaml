@@ -92,6 +92,7 @@ services:
       PS8_DATABASE_URL: postgres://${PS8_COMMAND_WRITER_USER}:${PS8_COMMAND_WRITER_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
       PS8_JWKS_URL: http://token-server:6060/jwks
       PS8_POST_COMMIT_FAULT_SECRET: ${PS8_POST_COMMIT_FAULT_SECRET:?per-run fault secret is required}
+      PS8_REPLICA_ROTATION_SECRET: ${PS8_REPLICA_ROTATION_SECRET:?distinct per-run replica rotation secret is required}
     ports:
       - "127.0.0.1:${PS8_COMMAND_PORT}:7070"
     depends_on:

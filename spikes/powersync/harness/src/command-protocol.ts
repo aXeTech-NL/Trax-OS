@@ -16,9 +16,29 @@ export interface SpikeCommand {
   payload?: string;
 }
 
-export interface SpikeCommandEnvelope {
+export interface ReplicaBinding {
+  replicaId: string;
+  replicaEpoch: number;
+}
+export interface ReplicaSessionSecret extends ReplicaBinding { credential: string }
+
+export function parseReplicaSessionSecret(value: unknown): ReplicaSessionSecret {
+  const input = record(value, "Replica session");
+  exactKeys(input, ["replicaId", "replicaEpoch", "credential"], "Replica session");
+  const replicaId = boundedString(input.replicaId, "replicaId", 36).toLowerCase();
+  if (!commandUuid.test(replicaId)) throw new Error("replicaId must be a version-4 UUID.");
+  if (!Number.isSafeInteger(input.replicaEpoch) || Number(input.replicaEpoch) < 1) throw new Error("replicaEpoch must be a positive safe integer.");
+  const credential = boundedString(input.credential, "credential", 64);
+  if (!/^r2_[A-Za-z0-9_-]{43}$/.test(credential)) throw new Error("credential must encode a tagged 32-byte secret.");
+  const encoded = credential.slice(3);
+  let bytes: Buffer;
+  try { bytes = Buffer.from(encoded, "base64url"); } catch { throw new Error("credential must encode a tagged 32-byte secret."); }
+  if (bytes.length !== 32 || bytes.toString("base64url") !== encoded) throw new Error("credential must encode a tagged 32-byte secret.");
+  return { replicaId, replicaEpoch: Number(input.replicaEpoch), credential };
+}
+
+export interface SpikeCommandEnvelope extends ReplicaBinding {
   spikeProtocol: 1;
-  deviceId: string;
   localTransactionId: string;
   commands: SpikeCommand[];
 }
@@ -70,9 +90,11 @@ function boundedString(value: unknown, label: string, maximum: number): string {
 
 export function parseCommandEnvelope(value: unknown): SpikeCommandEnvelope {
   const input = record(value, "Command envelope");
-  exactKeys(input, ["spikeProtocol", "deviceId", "localTransactionId", "commands"], "Command envelope");
+  exactKeys(input, ["spikeProtocol", "replicaId", "replicaEpoch", "localTransactionId", "commands"], "Command envelope");
   if (input.spikeProtocol !== spikeProtocol) throw new Error("Unsupported spike protocol.");
-  const deviceId = boundedString(input.deviceId, "deviceId", 128);
+  const replicaId = boundedString(input.replicaId, "replicaId", 36).toLowerCase();
+  if (!uuid.test(replicaId)) throw new Error("replicaId must be a UUID.");
+  if (!Number.isSafeInteger(input.replicaEpoch) || Number(input.replicaEpoch) < 1) throw new Error("replicaEpoch must be a positive safe integer.");
   const localTransactionId = boundedString(input.localTransactionId, "localTransactionId", 128);
   if (!Array.isArray(input.commands) || input.commands.length !== 1) {
     throw new Error("The M3a envelope must contain exactly one command.");
@@ -102,11 +124,13 @@ export function parseCommandEnvelope(value: unknown): SpikeCommandEnvelope {
     targets.add(resourceId);
     return { commandId, type, resourceId, resourceIncarnationId, expectedRecordVersion: Number(command.expectedRecordVersion), ...(payload === undefined ? {} : { payload }) };
   });
-  return { spikeProtocol, deviceId, localTransactionId, commands };
+  return { spikeProtocol, replicaId, replicaEpoch: Number(input.replicaEpoch), localTransactionId, commands };
 }
 
-export function commandDigest(command: SpikeCommand): string {
+export function commandDigest(command: SpikeCommand, binding: ReplicaBinding): string {
   const normalized = JSON.stringify({
+    replicaId: binding.replicaId,
+    replicaEpoch: binding.replicaEpoch,
     commandId: command.commandId,
     type: command.type,
     resourceId: command.resourceId,
@@ -117,7 +141,7 @@ export function commandDigest(command: SpikeCommand): string {
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export function parseCommandResponse(value: unknown, commands: readonly SpikeCommand[]): SpikeCommandResponse {
+export function parseCommandResponse(value: unknown, commands: readonly SpikeCommand[], binding: ReplicaBinding): SpikeCommandResponse {
   const input = record(value, "Command response");
   exactKeys(input, ["spikeProtocol", "results"], "Command response");
   if (input.spikeProtocol !== spikeProtocol || !Array.isArray(input.results) || input.results.length !== commands.length) {
@@ -128,7 +152,7 @@ export function parseCommandResponse(value: unknown, commands: readonly SpikeCom
     const result = record(raw, "Command result");
     exactKeys(result, ["commandId", "resourceId", "digest", "state", "code", "previousVersion", "currentVersion", "attemptNumber"], "Command result");
     const command = expected.get(String(result.commandId));
-    if (!command || result.resourceId !== command.resourceId || result.digest !== commandDigest(command)) throw new Error("Command result identity or digest mismatch.");
+    if (!command || result.resourceId !== command.resourceId || result.digest !== commandDigest(command, binding)) throw new Error("Command result identity or digest mismatch.");
     expected.delete(command.commandId);
     if (result.state !== "applied" && result.state !== "conflict" && result.state !== "denied") throw new Error("Unknown command result state.");
     if (!["applied", "already_applied", "optimistic_conflict", "stale_incarnation", "command_denied"].includes(String(result.code))) throw new Error("Unknown command result code.");
