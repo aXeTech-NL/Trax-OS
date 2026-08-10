@@ -65,10 +65,10 @@ async function authenticate(request: IncomingMessage): Promise<string> {
   return verified.payload.sub;
 }
 
-interface ResourceRow { id: string; version: string; deleted_at: string | null }
+interface ResourceRow { id: string; resource_incarnation_id: string; version: string; deleted_at: string | null }
 interface ReceiptRow {
   command_id: string; resource_id: string; digest: string; result_state: "applied" | "conflict" | "denied";
-  result_code: "applied" | "optimistic_conflict" | "command_denied"; previous_version: string; current_version: string;
+  result_code: "applied" | "optimistic_conflict" | "stale_incarnation" | "command_denied"; previous_version: string; current_version: string;
 }
 
 function resultFromReceipt(row: ReceiptRow, attemptNumber: number, replay: boolean): SpikeCommandResult {
@@ -78,6 +78,22 @@ function resultFromReceipt(row: ReceiptRow, attemptNumber: number, replay: boole
     digest: row.digest,
     state: row.result_state,
     code: replay && row.result_code === "applied" ? "already_applied" : row.result_code,
+    previousVersion: Number(row.previous_version),
+    currentVersion: Number(row.current_version),
+    attemptNumber,
+  };
+}
+
+function deniedResultFromDurableReceipt(row: ReceiptRow, attemptNumber: number): SpikeCommandResult {
+  // A previously applied receipt remains immutable. After revocation we expose
+  // only a terminal denial derived from its identity/digest/version binding,
+  // never the historic applied outcome.
+  return {
+    commandId: row.command_id,
+    resourceId: row.resource_id,
+    digest: row.digest,
+    state: "denied",
+    code: "command_denied",
     previousVersion: Number(row.previous_version),
     currentVersion: Number(row.current_version),
     attemptNumber,
@@ -110,32 +126,47 @@ async function executeCommands(
     if (!hasActiveGrant) {
       const command = commands[0]!;
       const digest = commandDigest(command);
-      await client.query(
-        `INSERT INTO ps8_command_receipts
-           (user_id, command_id, resource_id, digest, result_state, result_code, previous_version, current_version)
-         SELECT $1, $2, resource.id, $4, 'denied', 'command_denied', $5, $5
-           FROM resources AS resource WHERE resource.id = $3
-         ON CONFLICT (user_id, command_id) DO NOTHING`,
-        [userId, command.commandId, command.resourceId, digest, command.expectedRecordVersion],
-      );
-      const deniedReceipt = await client.query<ReceiptRow>(
+      let receiptResult = await client.query<ReceiptRow>(
         `SELECT command_id, resource_id, digest, result_state, result_code, previous_version, current_version
            FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2`,
         [userId, command.commandId],
       );
+      let receipt = receiptResult.rows[0];
+      if (receipt && (receipt.resource_id !== command.resourceId || receipt.digest !== digest)) {
+        await client.query("ROLLBACK");
+        return { status: 409, body: { error: "idempotency_conflict" } };
+      }
+      if (!receipt) {
+        // Missing and purged targets still get a durable, digest-bound terminal
+        // receipt. Values come only from the authenticated request and reveal no
+        // server-owned scope, existence, payload, or prior version.
+        await client.query(
+          `INSERT INTO ps8_command_receipts
+             (user_id, command_id, resource_id, digest, result_state, result_code, previous_version, current_version)
+           VALUES ($1, $2, $3, $4, 'denied', 'command_denied', $5, $5)
+           ON CONFLICT (user_id, command_id) DO NOTHING`,
+          [userId, command.commandId, command.resourceId, digest, command.expectedRecordVersion],
+        );
+        receiptResult = await client.query<ReceiptRow>(
+          `SELECT command_id, resource_id, digest, result_state, result_code, previous_version, current_version
+             FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2`,
+          [userId, command.commandId],
+        );
+        receipt = receiptResult.rows[0];
+      }
+      if (!receipt || receipt.resource_id !== command.resourceId || receipt.digest !== digest) {
+        await client.query("ROLLBACK");
+        return { status: 409, body: { error: "idempotency_conflict" } };
+      }
       await client.query("COMMIT");
-      const receipt = deniedReceipt.rows[0];
-      const matches = receipt?.resource_id === command.resourceId && receipt.digest === digest && receipt.result_state === "denied";
       return {
         status: 403,
-        body: matches
-          ? { spikeProtocol, results: [resultFromReceipt(receipt, attemptNumber, true)] }
-          : { error: "command_denied" },
+        body: { spikeProtocol, results: [deniedResultFromDurableReceipt(receipt, attemptNumber)] },
       };
     }
     await afterAuthorization?.();
     const resourcesResult = await client.query<ResourceRow>(
-      "SELECT id, version, deleted_at FROM resources WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE",
+      "SELECT id, resource_incarnation_id, version, deleted_at FROM resources WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE",
       [resourceIds],
     );
     if (resourcesResult.rows.length !== resourceIds.length) {
@@ -166,22 +197,26 @@ async function executeCommands(
     }
 
     const resources = new Map(resourcesResult.rows.map((row) => [row.id, row]));
-    const conflict = commands.some((command) => {
+    const staleIncarnation = commands.some((command) =>
+      resources.get(command.resourceId)!.resource_incarnation_id !== command.resourceIncarnationId,
+    );
+    const conflict = !staleIncarnation && commands.some((command) => {
       const resource = resources.get(command.resourceId)!;
       return resource.deleted_at !== null || Number(resource.version) !== command.expectedRecordVersion;
     });
     const storedResults: SpikeCommandResult[] = [];
-    if (conflict) {
+    if (staleIncarnation || conflict) {
+      const resultCode = staleIncarnation ? "stale_incarnation" : "optimistic_conflict";
       for (const command of commands) {
         const currentVersion = Number(resources.get(command.resourceId)!.version);
         const digest = commandDigest(command);
         await client.query(
           `INSERT INTO ps8_command_receipts
              (user_id, command_id, resource_id, digest, result_state, result_code, previous_version, current_version)
-           VALUES ($1, $2, $3, $4, 'conflict', 'optimistic_conflict', $5, $6)`,
-          [userId, command.commandId, command.resourceId, digest, command.expectedRecordVersion, currentVersion],
+           VALUES ($1, $2, $3, $4, 'conflict', $5, $6, $7)`,
+          [userId, command.commandId, command.resourceId, digest, resultCode, command.expectedRecordVersion, currentVersion],
         );
-        storedResults.push({ commandId: command.commandId, resourceId: command.resourceId, digest, state: "conflict", code: "optimistic_conflict", previousVersion: command.expectedRecordVersion, currentVersion, attemptNumber });
+        storedResults.push({ commandId: command.commandId, resourceId: command.resourceId, digest, state: "conflict", code: resultCode, previousVersion: command.expectedRecordVersion, currentVersion, attemptNumber });
       }
     } else {
       for (const [ordinal, command] of commands.entries()) {
@@ -190,7 +225,7 @@ async function executeCommands(
         if (command.type === "ps8.resource.update.v1") {
           await client.query("UPDATE resources SET payload = $1, version = $2 WHERE id = $3", [command.payload, currentVersion, command.resourceId]);
         } else {
-          await client.query("UPDATE resources SET deleted_at = clock_timestamp(), version = $1 WHERE id = $2", [currentVersion, command.resourceId]);
+          await client.query("UPDATE resources SET deleted_at = ps8_now(), version = $1 WHERE id = $2", [currentVersion, command.resourceId]);
         }
         const digest = commandDigest(command);
         await client.query(
@@ -288,8 +323,18 @@ const server = createServer(async (request, response) => {
           }
         : undefined,
     );
-    if (outcome.status === 200 && fault === "post-commit-drop" && authorizedFault && !dropped.has(attemptKey)) {
+    if (
+      outcome.status === 200
+      && (fault === "post-commit-drop" || fault === "post-commit-drop-barrier")
+      && authorizedFault
+      && !dropped.has(attemptKey)
+    ) {
       dropped.add(attemptKey);
+      if (fault === "post-commit-drop-barrier") {
+        const barrier = createAuthorizationBarrier(barrierCommandId);
+        try { await barrier.wait; }
+        finally { authorizationBarriers.delete(barrierCommandId); }
+      }
       request.socket.destroy();
       return;
     }

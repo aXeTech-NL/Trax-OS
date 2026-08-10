@@ -15,6 +15,7 @@ import {
   expectedCaseyAfterAlphaRevocation,
   expectedResources,
   ids,
+  resourceIncarnations,
   type Principal,
 } from "../src/fixtures.js";
 import { writeEvidenceEntry } from "../src/evidence.js";
@@ -37,6 +38,7 @@ const powerSyncEndpoint = requiredEnvironment("PS8_POWERSYNC_URL");
 const commandEndpoint = requiredEnvironment("PS8_COMMAND_URL");
 const faultSecret = requiredEnvironment("PS8_POST_COMMIT_FAULT_SECRET");
 const databaseUrl = requiredEnvironment("PS8_DATABASE_URL");
+const commandDatabaseUrl = requiredEnvironment("PS8_COMMAND_DATABASE_URL");
 const runtimeDirectory = requiredEnvironment("PS8_RUNTIME_DIR");
 const evidenceDirectory = requiredEnvironment("PS8_EVIDENCE_DIR");
 const runId = requiredEnvironment("PS8_RUN_ID");
@@ -600,8 +602,10 @@ async function commandRequest(token: string | undefined, body: unknown, headers:
   return { status: response.status, body: JSON.parse(await response.text()) as Record<string, unknown> };
 }
 
-function commandBody(command: { commandId: string; type: string; resourceId: string; expectedRecordVersion: number; payload?: string }) {
-  return { spikeProtocol: 1, deviceId: "integration-telemetry", localTransactionId: randomUUID(), commands: [command] };
+function commandBody(command: { commandId: string; type: string; resourceId: string; resourceIncarnationId?: string; expectedRecordVersion: number; payload?: string }) {
+  const resourceIncarnationId = command.resourceIncarnationId ?? resourceIncarnations[command.resourceId];
+  if (!resourceIncarnationId) throw new Error("Integration command requires a known resource incarnation.");
+  return { spikeProtocol: 1, deviceId: "integration-telemetry", localTransactionId: randomUUID(), commands: [{ ...command, resourceIncarnationId }] };
 }
 
 async function waitForResult(client: SpikeClient, commandId: string) {
@@ -643,17 +647,46 @@ test(
         alice: await fetchToken("alice"), bob: await fetchToken("bob"), casey: await fetchToken("casey"), eve: await fetchToken("eve"),
       };
 
-      const privilegeRows = await pool.query<{ role: string; resource_update: boolean; receipt_insert: boolean }>(
+      const privilegeRows = await pool.query<{ role: string; resource_update: boolean; receipt_insert: boolean; clock_advance: boolean; retention_run: boolean; database_temp: boolean }>(
         `SELECT role,
            has_column_privilege(role, 'resources', 'payload', 'UPDATE') AS resource_update,
-           has_table_privilege(role, 'ps8_command_receipts', 'INSERT') AS receipt_insert
+           has_table_privilege(role, 'ps8_command_receipts', 'INSERT') AS receipt_insert,
+           has_function_privilege(role, 'ps8_test_set_time(timestamptz)', 'EXECUTE') AS clock_advance,
+           has_function_privilege(role, 'ps8_run_retention()', 'EXECUTE') AS retention_run,
+           has_database_privilege(role, current_database(), 'TEMP') AS database_temp
          FROM unnest(ARRAY['ps8_replication','ps8_storage','ps8_token_reader','ps8_command_writer']) role`,
       );
       for (const row of privilegeRows.rows.filter((row) => row.role !== "ps8_command_writer")) {
         assert.equal(row.resource_update, false, `${row.role} can update resources`);
         assert.equal(row.receipt_insert, false, `${row.role} can insert receipts`);
       }
-      assert.deepEqual(privilegeRows.rows.find((row) => row.role === "ps8_command_writer"), { role: "ps8_command_writer", resource_update: true, receipt_insert: true });
+      for (const row of privilegeRows.rows) {
+        assert.equal(row.clock_advance, false, `${row.role} can advance the test clock`);
+        assert.equal(row.retention_run, false, `${row.role} can run retention maintenance`);
+      }
+      assert.deepEqual(privilegeRows.rows.find((row) => row.role === "ps8_command_writer"), {
+        role: "ps8_command_writer", resource_update: true, receipt_insert: true,
+        clock_advance: false, retention_run: false, database_temp: false,
+      });
+      assert.equal(privilegeRows.rows.find((row) => row.role === "ps8_storage")?.database_temp, true);
+      assert.ok(privilegeRows.rows.filter((row) => row.role !== "ps8_storage").every((row) => row.database_temp === false));
+
+      const floorBeforeTempProbe = Number((await pool.query("SELECT retained_graveyard_floor FROM ps8_retention_state WHERE singleton")).rows[0].retained_graveyard_floor);
+      const writerPool = new pg.Pool({ connectionString: commandDatabaseUrl, max: 1, connectionTimeoutMillis: 5_000, query_timeout: 5_000, statement_timeout: 5_000 });
+      try {
+        await assert.rejects(
+          writerPool.query("CREATE TEMP TABLE ps8_retention_state (singleton boolean, effective_now timestamptz)"),
+          /permission denied.*temporary|permission denied.*database/i,
+        );
+        await writerPool.query("SET search_path = pg_temp, public");
+        assert.equal(
+          (await writerPool.query("SELECT ps8_now() AS effective_now")).rows[0].effective_now.toISOString(),
+          "2026-01-01T00:00:00.000Z",
+        );
+      } finally {
+        await writerPool.end();
+      }
+      assert.equal(Number((await pool.query("SELECT retained_graveyard_floor FROM ps8_retention_state WHERE singleton")).rows[0].retained_graveyard_floor), floorBeforeTempProbe);
 
       const probeCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1", resourceId: ids.resources.sharedOne, expectedRecordVersion: 1, payload: "not-applied" };
       assert.equal((await commandRequest(undefined, commandBody(probeCommand))).status, 401);
@@ -720,6 +753,34 @@ test(
       assert.equal(afterRevocation.status, 403);
       await pool.query("UPDATE journey_memberships SET active = true WHERE user_id = $1 AND journey_id = $2", [ids.users.eve, ids.journeys.two]);
 
+      const retentionRaceCommand = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedTwo, expectedRecordVersion: 2,
+        payload: "M3B_RETENTION_LOCK_ORDER",
+      };
+      const retentionRaceRequest = commandRequest(tokens.eve, commandBody(retentionRaceCommand), {
+        "x-ps8-fault": "authorization-barrier", "x-ps8-fault-secret": faultSecret,
+      });
+      await pollUntil("retention race authorization barrier", () => testControl(`barriers/${retentionRaceCommand.commandId}`), (body) => body.reached === true, 10_000, 50);
+      let retentionRaceError: unknown;
+      const retentionRace = pool.query("/* ps8-race-retention */ SELECT * FROM ps8_run_retention()")
+        .catch((error: unknown) => { retentionRaceError = error; });
+      await pollUntil(
+        "retention waits on active grant lock",
+        () => pool.query<{ wait_event_type: string | null }>("SELECT wait_event_type FROM pg_stat_activity WHERE query LIKE '%ps8-race-retention%' AND pid <> pg_backend_pid() AND state = 'active'"),
+        (result) => result.rows.some((row) => row.wait_event_type === "Lock"),
+        10_000,
+        50,
+      );
+      await testControl(`barriers/${retentionRaceCommand.commandId}/release`, "POST");
+      assert.equal((await retentionRaceRequest).status, 200);
+      await retentionRace;
+      if (retentionRaceError) throw retentionRaceError;
+      assert.deepEqual(
+        (await pool.query("SELECT payload, version FROM resources WHERE id = $1", [retentionRaceCommand.resourceId])).rows.map((row) => ({ payload: row.payload, version: Number(row.version) })),
+        [{ payload: retentionRaceCommand.payload, version: 3 }],
+      );
+
       const retryClient = await openSpikeClient({ name: `command-retry-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice, uploadFault: { mode: "post-commit-drop", secret: faultSecret } });
       clients.push(retryClient);
       const retryCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.sharedOne, expectedRecordVersion: 1, payload: "M3A_RETRY_RESULT" };
@@ -746,6 +807,59 @@ test(
         assert.equal(changedReplay.status, 409);
         assert.equal(changedReplay.body.error, "idempotency_conflict");
       }
+
+      const revokedRetryClient = await openSpikeClient({
+        name: `revoked-post-commit-retry-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint,
+        commandEndpoint, token: tokens.eve,
+        uploadFault: { mode: "post-commit-drop-barrier", secret: faultSecret },
+      });
+      clients.push(revokedRetryClient);
+      const postCommitRevocationCommand = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedTwo, expectedRecordVersion: 3,
+        payload: "M3B_APPLIED_BEFORE_RETRY_REVOCATION",
+      };
+      await revokedRetryClient.queueCommands([postCommitRevocationCommand]);
+      await pollUntil("post-commit drop barrier", () => testControl(`barriers/${postCommitRevocationCommand.commandId}`), (body) => body.reached === true, 10_000, 50);
+      const appliedBeforeRevocation = await pool.query(
+        "SELECT result_state, result_code, digest FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2",
+        [ids.users.eve, postCommitRevocationCommand.commandId],
+      );
+      assert.deepEqual(
+        { state: appliedBeforeRevocation.rows[0]?.result_state, code: appliedBeforeRevocation.rows[0]?.result_code },
+        { state: "applied", code: "applied" },
+      );
+      await pool.query("UPDATE journey_memberships SET active = false WHERE user_id = $1 AND journey_id = $2", [ids.users.eve, ids.journeys.two]);
+      await testControl(`barriers/${postCommitRevocationCommand.commandId}/release`, "POST");
+      const postCommitRevokedResult = await waitForResult(revokedRetryClient, postCommitRevocationCommand.commandId);
+      assert.deepEqual(
+        { state: postCommitRevokedResult.state, code: postCommitRevokedResult.result_code },
+        { state: "denied", code: "command_denied" },
+      );
+      await pollUntil("post-commit revoked retry queue completion", () => revokedRetryClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
+      const immutableAppliedReceipt = await pool.query(
+        "SELECT result_state, result_code, digest FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2",
+        [ids.users.eve, postCommitRevocationCommand.commandId],
+      );
+      assert.deepEqual(immutableAppliedReceipt.rows[0], appliedBeforeRevocation.rows[0], "derived denial mutated the durable applied receipt");
+      const changedRevokedReplay = await commandRequest(tokens.eve, commandBody({ ...postCommitRevocationCommand, payload: "M3B_CHANGED_REVOKED_REPLAY" }));
+      assert.equal(changedRevokedReplay.status, 409);
+      assert.equal(changedRevokedReplay.body.error, "idempotency_conflict");
+      assert.deepEqual(
+        (await pool.query("SELECT payload, version FROM resources WHERE id = $1", [postCommitRevocationCommand.resourceId])).rows.map((row) => ({ payload: row.payload, version: Number(row.version) })),
+        [{ payload: postCommitRevocationCommand.payload, version: 4 }],
+      );
+      revokedRetryClient.setUploadFault(undefined);
+      await pool.query("UPDATE journey_memberships SET active = true WHERE user_id = $1 AND journey_id = $2", [ids.users.eve, ids.journeys.two]);
+      await pollUntil("post-commit retry grant restored", () => revokedRetryClient.readRawResources(), (rows) => rows.some((row) => row.id === postCommitRevocationCommand.resourceId && row.version === 4), 30_000, 100);
+      const postCommitLaterProgress = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedTwo, expectedRecordVersion: 4,
+        payload: "M3B_AFTER_REVOKED_RETRY",
+      };
+      await revokedRetryClient.queueCommands([postCommitLaterProgress]);
+      assert.equal((await waitForResult(revokedRetryClient, postCommitLaterProgress.commandId)).state, "applied");
+      await pollUntil("post-commit retry later progress", () => revokedRetryClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
 
       const idempotencyClient = await openSpikeClient({ name: `idempotency-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice });
       clients.push(idempotencyClient);
@@ -794,7 +908,7 @@ test(
       await pool.query("UPDATE journey_memberships SET active = false WHERE user_id = $1 AND journey_id = $2", [ids.users.bob, ids.journeys.one]);
       const deniedClient = await openSpikeClient({ name: `denied-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob });
       clients.push(deniedClient);
-      const deniedCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.bravoPrivate, expectedRecordVersion: 1, payload: "M3A_DENIED_MUST_NOT_APPLY" };
+      const deniedCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.bravoPrivate, resourceIncarnationId: resourceIncarnations[ids.resources.bravoPrivate]!, expectedRecordVersion: 1, payload: "M3A_DENIED_MUST_NOT_APPLY" };
       await deniedClient.queueCommands([deniedCommand]);
       const deniedResult = await waitForResult(deniedClient, deniedCommand.commandId);
       assert.deepEqual({ state: deniedResult.state, code: deniedResult.result_code }, { state: "denied", code: "command_denied" });
@@ -880,6 +994,324 @@ test(
           unsupportedCrudRemainedQueued: true,
           totalReceipts: Number(serverCounts.rows[0].receipts), totalEvents: Number(serverCounts.rows[0].events),
         },
+        sanitized: true,
+      } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+
+      const r1StartedAt = new Date().toISOString();
+      const maintenance = async () => {
+        const row = (await pool.query("SELECT * FROM ps8_run_retention()")).rows[0];
+        return {
+          payloadsCleared: Number(row.payloads_cleared),
+          markersPurged: Number(row.markers_purged),
+          retainedFloor: Number(row.retained_floor),
+        };
+      };
+      const graveyardColumns = await pool.query<{ column_name: string }>(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'ps8_resource_graveyard' ORDER BY column_name",
+      );
+      assert.ok(!graveyardColumns.rows.some((row) => row.column_name === "payload"));
+      const initialMarker = await pool.query(
+        "SELECT resource_incarnation_id, final_version, deletion_sequence, deleted_at FROM ps8_resource_graveyard WHERE resource_id = $1",
+        [ids.resources.sharedOne],
+      );
+      assert.deepEqual({
+        incarnation: initialMarker.rows[0]?.resource_incarnation_id,
+        finalVersion: Number(initialMarker.rows[0]?.final_version),
+        deletionSequence: Number(initialMarker.rows[0]?.deletion_sequence),
+      }, {
+        incarnation: resourceIncarnations[ids.resources.sharedOne],
+        finalVersion: 3,
+        deletionSequence: 1,
+      });
+
+      await pool.query("SELECT ps8_test_set_time('2026-01-31T00:00:00Z')");
+      assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 0, retainedFloor: 1 });
+      assert.notEqual((await pool.query("SELECT payload FROM resources WHERE id = $1", [ids.resources.sharedOne])).rows[0]?.payload, null);
+      await pool.query("SELECT ps8_test_set_time('2026-01-31T00:00:00.000001Z')");
+      assert.deepEqual(await maintenance(), { payloadsCleared: 1, markersPurged: 0, retainedFloor: 1 });
+      assert.equal((await pool.query("SELECT payload FROM resources WHERE id = $1", [ids.resources.sharedOne])).rows[0]?.payload, null);
+
+      await pool.query("SELECT ps8_test_set_time('2026-04-01T00:00:00Z')");
+      assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 0, retainedFloor: 1 });
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard WHERE resource_id = $1", [ids.resources.sharedOne])).rows[0].count), 1);
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required('2026-01-01T00:00:00Z', 1) AS required")).rows[0].required, false);
+      const replacementIncarnation = "85555555-5555-4555-8555-555555555501";
+      await assert.rejects(
+        pool.query(
+          `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+           VALUES ($1, $2, $3, $4, 'journey', NULL, 'M3B_REUSE_BLOCKED', 3)`,
+          [ids.resources.sharedOne, replacementIncarnation, ids.workspaces.one, ids.journeys.one],
+        ),
+        /retained graveyard|duplicate key/i,
+      );
+
+      await pool.query("SELECT ps8_test_set_time('2026-04-01T00:00:00.000001Z')");
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required('2026-01-01T00:00:00Z', 1) AS required")).rows[0].required, true);
+      assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 1, retainedFloor: 2 });
+      await pollUntil("expired tombstone leaves connected replica", () => deleteClient.readRawResources(), (rows) => !rows.some((row) => row.id === ids.resources.sharedOne), 30_000, 100);
+      assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 0, retainedFloor: 2 });
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required(ps8_now(), 1) AS required")).rows[0].required, true);
+
+      const purgedTargetCommand = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedOne,
+        resourceIncarnationId: resourceIncarnations[ids.resources.sharedOne]!,
+        expectedRecordVersion: 3, payload: "M3B_PURGED_TARGET_MUST_NOT_APPLY",
+      };
+      await deleteClient.queueCommands([purgedTargetCommand]);
+      const purgedTargetResult = await waitForResult(deleteClient, purgedTargetCommand.commandId);
+      assert.deepEqual(
+        { state: purgedTargetResult.state, code: purgedTargetResult.result_code },
+        { state: "denied", code: "command_denied" },
+      );
+      await pollUntil("purged target terminal queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
+      assert.deepEqual(
+        (await pool.query("SELECT result_state, result_code FROM ps8_command_receipts WHERE user_id = $1 AND command_id = $2", [ids.users.bob, purgedTargetCommand.commandId])).rows[0],
+        { result_state: "denied", result_code: "command_denied" },
+      );
+
+      await pool.query(
+        `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+         VALUES ($1, $2, $3, $4, 'journey', NULL, 'M3B_REPLACEMENT', 3)`,
+        [ids.resources.sharedOne, replacementIncarnation, ids.workspaces.one, ids.journeys.one],
+      );
+      await pollUntil(
+        "replacement incarnation converges",
+        () => deleteClient.readRawResources(),
+        (rows) => rows.some((row) => row.id === ids.resources.sharedOne && row.resource_incarnation_id === replacementIncarnation && row.version === 3),
+        30_000,
+        100,
+      );
+      const oldIncarnationCommand = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedOne,
+        resourceIncarnationId: resourceIncarnations[ids.resources.sharedOne]!,
+        expectedRecordVersion: 3, payload: "M3B_OLD_INCARNATION_MUST_NOT_APPLY",
+      };
+      await deleteClient.queueCommands([oldIncarnationCommand]);
+      const oldIncarnationResult = await waitForResult(deleteClient, oldIncarnationCommand.commandId);
+      assert.deepEqual(
+        { state: oldIncarnationResult.state, code: oldIncarnationResult.result_code, currentVersion: oldIncarnationResult.current_version },
+        { state: "conflict", code: "stale_incarnation", currentVersion: 3 },
+      );
+      await pollUntil("stale incarnation queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100);
+      const replacementBeforeProgress = await pool.query("SELECT resource_incarnation_id, version FROM resources WHERE id = $1", [ids.resources.sharedOne]);
+      assert.deepEqual({ incarnation: replacementBeforeProgress.rows[0].resource_incarnation_id, version: Number(replacementBeforeProgress.rows[0].version) }, { incarnation: replacementIncarnation, version: 3 });
+      const oldIncarnationReplay = await commandRequest(tokens.bob, commandBody(oldIncarnationCommand));
+      assert.equal(oldIncarnationReplay.status, 200);
+      assert.equal((oldIncarnationReplay.body.results as Array<Record<string, unknown>>)[0]?.code, "stale_incarnation");
+      const changedIncarnationReplay = await commandRequest(tokens.bob, commandBody({ ...oldIncarnationCommand, resourceIncarnationId: replacementIncarnation }));
+      assert.equal(changedIncarnationReplay.status, 409);
+      assert.equal(changedIncarnationReplay.body.error, "idempotency_conflict");
+
+      const afterIncarnationConflict = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: ids.resources.sharedOne, resourceIncarnationId: replacementIncarnation,
+        expectedRecordVersion: 3, payload: "M3B_AFTER_INCARNATION_CONFLICT",
+      };
+      await deleteClient.queueCommands([afterIncarnationConflict]);
+      assert.deepEqual(
+        { state: (await waitForResult(deleteClient, afterIncarnationConflict.commandId)).state,
+          queue: await pollUntil("post-incarnation progress queue completion", () => deleteClient.uploadQueueCount(), (count) => count === 0, 10_000, 100) },
+        { state: "applied", queue: 0 },
+      );
+
+      await pool.query("SELECT ps8_test_set_graveyard_retention(interval '120 days')");
+      const extendedDelete = {
+        commandId: randomUUID(), type: "ps8.resource.soft_delete.v1" as const,
+        resourceId: ids.resources.bravoPrivate,
+        resourceIncarnationId: resourceIncarnations[ids.resources.bravoPrivate]!,
+        expectedRecordVersion: 2,
+      };
+      await deleteClient.queueCommands([extendedDelete]);
+      assert.equal((await waitForResult(deleteClient, extendedDelete.commandId)).state, "applied");
+      const extendedMarker = await pool.query("SELECT deletion_sequence, deleted_at FROM ps8_resource_graveyard WHERE resource_id = $1", [ids.resources.bravoPrivate]);
+      const extendedSequence = Number(extendedMarker.rows[0].deletion_sequence);
+      const markerTime = "(SELECT deleted_at FROM ps8_resource_graveyard WHERE resource_id = $1)";
+
+      await pool.query(`SELECT ps8_test_set_time(${markerTime} + interval '90 days')`, [ids.resources.bravoPrivate]);
+      const exactExtended90 = await maintenance();
+      assert.equal(exactExtended90.markersPurged, 0);
+      assert.equal((await pool.query(`SELECT ps8_replica_reset_required(${markerTime}, $2) AS required`, [ids.resources.bravoPrivate, extendedSequence])).rows[0].required, false);
+      await pool.query(`SELECT ps8_test_set_time(${markerTime} + interval '90 days 1 microsecond')`, [ids.resources.bravoPrivate]);
+      assert.equal((await pool.query(`SELECT ps8_replica_reset_required(${markerTime}, $2) AS required`, [ids.resources.bravoPrivate, extendedSequence])).rows[0].required, true);
+      assert.equal((await maintenance()).markersPurged, 0);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard WHERE resource_id = $1", [ids.resources.bravoPrivate])).rows[0].count), 1);
+      await pool.query(`SELECT ps8_test_set_time(${markerTime} + interval '120 days')`, [ids.resources.bravoPrivate]);
+      assert.equal((await maintenance()).markersPurged, 0);
+      await pool.query(`SELECT ps8_test_set_time(${markerTime} + interval '120 days 1 microsecond')`, [ids.resources.bravoPrivate]);
+      const extendedPurge = await maintenance();
+      assert.deepEqual({ markersPurged: extendedPurge.markersPurged, retainedFloor: extendedPurge.retainedFloor }, { markersPurged: 1, retainedFloor: extendedSequence + 1 });
+      assert.deepEqual(await maintenance(), { payloadsCleared: 0, markersPurged: 0, retainedFloor: extendedSequence + 1 });
+
+      // Exercise the formerly inverted path directly through the limited writer:
+      // resource row -> graveyard trigger -> serialized state counter. Retention
+      // purges another marker concurrently, then waits on state without holding a
+      // lock the writer needs, so both transactions must complete without deadlock.
+      const expiredRaceResource = randomUUID();
+      const expiredRaceIncarnation = randomUUID();
+      const limitedWriterResource = randomUUID();
+      const limitedWriterIncarnation = randomUUID();
+      for (const [resourceId, incarnationId, payload] of [
+        [expiredRaceResource, expiredRaceIncarnation, "M3B_EXPIRED_RACE_MARKER"],
+        [limitedWriterResource, limitedWriterIncarnation, "M3B_LIMITED_WRITER_SOFT_DELETE"],
+      ] as const) {
+        await pool.query(
+          `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+           VALUES ($1, $2, $3, $4, 'journey', NULL, $5, 1)`,
+          [resourceId, incarnationId, ids.workspaces.one, ids.journeys.one, payload],
+        );
+      }
+      await pool.query("UPDATE resources SET deleted_at = ps8_now(), version = 2 WHERE id = $1", [expiredRaceResource]);
+      await pool.query(
+        "UPDATE ps8_resource_graveyard SET deleted_at = ps8_now() - interval '120 days 1 microsecond' WHERE resource_id = $1",
+        [expiredRaceResource],
+      );
+
+      const directWriterPool = new pg.Pool({
+        connectionString: commandDatabaseUrl, max: 1, connectionTimeoutMillis: 5_000,
+        query_timeout: 5_000, statement_timeout: 5_000,
+      });
+      const directWriter = await directWriterPool.connect();
+      let directWriterCommitted = false;
+      let directRetentionError: unknown;
+      let directRetentionResult: pg.QueryResult | undefined;
+      try {
+        await directWriter.query("BEGIN");
+        await directWriter.query(
+          "/* ps8-limited-writer-soft-delete */ UPDATE resources SET deleted_at = ps8_now(), version = version + 1 WHERE id = $1",
+          [limitedWriterResource],
+        );
+        const directRetention = pool.query("/* ps8-race-direct-soft-delete-retention */ SELECT * FROM ps8_run_retention()")
+          .then((result) => { directRetentionResult = result; })
+          .catch((error: unknown) => { directRetentionError = error; });
+        await pollUntil(
+          "retention waits for limited-writer state allocation",
+          () => pool.query<{ wait_event_type: string | null }>(
+            "SELECT wait_event_type FROM pg_stat_activity WHERE query LIKE '%ps8-race-direct-soft-delete-retention%' AND pid <> pg_backend_pid() AND state = 'active'",
+          ),
+          (result) => result.rows.some((row) => row.wait_event_type === "Lock"),
+          5_000,
+          25,
+        );
+        await directWriter.query("COMMIT");
+        directWriterCommitted = true;
+        await directRetention;
+        if (directRetentionError) throw directRetentionError;
+        assert.ok(directRetentionResult);
+        assert.equal(Number(directRetentionResult.rows[0].markers_purged), 1);
+      } finally {
+        if (!directWriterCommitted) await directWriter.query("ROLLBACK").catch(() => undefined);
+        directWriter.release();
+        await directWriterPool.end();
+      }
+      const directMarker = await pool.query(
+        "SELECT deletion_sequence FROM ps8_resource_graveyard WHERE resource_id = $1",
+        [limitedWriterResource],
+      );
+      const directMarkerSequence = Number(directMarker.rows[0].deletion_sequence);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard WHERE resource_id = $1", [expiredRaceResource])).rows[0].count), 0);
+      assert.equal(Number((await pool.query("SELECT retained_graveyard_floor FROM ps8_retention_state WHERE singleton")).rows[0].retained_graveyard_floor), directMarkerSequence);
+      assert.equal((await pool.query("SELECT deleted_at IS NOT NULL AS deleted FROM resources WHERE id = $1", [limitedWriterResource])).rows[0].deleted, true);
+      await pool.query(
+        "UPDATE ps8_resource_graveyard SET deleted_at = ps8_now() - interval '120 days 1 microsecond' WHERE resource_id = $1",
+        [limitedWriterResource],
+      );
+      assert.deepEqual(
+        { markersPurged: (await maintenance()).markersPurged,
+          retainedFloor: Number((await pool.query("SELECT retained_graveyard_floor FROM ps8_retention_state WHERE singleton")).rows[0].retained_graveyard_floor) },
+        { markersPurged: 1, retainedFloor: directMarkerSequence + 1 },
+      );
+
+      const lowerMarkerResource = randomUUID();
+      const higherMarkerResource = randomUUID();
+      const lowerMarkerIncarnation = randomUUID();
+      const higherMarkerIncarnation = randomUUID();
+      for (const [resourceId, incarnationId, payload] of [
+        [lowerMarkerResource, lowerMarkerIncarnation, "M3B_LOWER_RETAINED_MARKER"],
+        [higherMarkerResource, higherMarkerIncarnation, "M3B_HIGHER_EXPIRED_MARKER"],
+      ] as const) {
+        await pool.query(
+          `INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload, version)
+           VALUES ($1, $2, $3, $4, 'journey', NULL, $5, 1)`,
+          [resourceId, incarnationId, ids.workspaces.one, ids.journeys.one, payload],
+        );
+        await pool.query("UPDATE resources SET deleted_at = ps8_now(), version = 2 WHERE id = $1", [resourceId]);
+      }
+      const sequenceRows = await pool.query<{ resource_id: string; deletion_sequence: string }>(
+        "SELECT resource_id, deletion_sequence FROM ps8_resource_graveyard WHERE resource_id = ANY($1::uuid[]) ORDER BY deletion_sequence",
+        [[lowerMarkerResource, higherMarkerResource]],
+      );
+      const sequenceByResource = new Map(sequenceRows.rows.map((row) => [row.resource_id, Number(row.deletion_sequence)]));
+      const lowerSequence = sequenceByResource.get(lowerMarkerResource)!;
+      const higherSequence = sequenceByResource.get(higherMarkerResource)!;
+      assert.ok(lowerSequence < higherSequence);
+      await pool.query(
+        "UPDATE ps8_resource_graveyard SET deleted_at = ps8_now() - interval '120 days 1 microsecond' WHERE resource_id = $1",
+        [higherMarkerResource],
+      );
+      const outOfOrderPurge = await maintenance();
+      assert.deepEqual(
+        { markersPurged: outOfOrderPurge.markersPurged, retainedFloor: outOfOrderPurge.retainedFloor },
+        { markersPurged: 1, retainedFloor: lowerSequence },
+      );
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard WHERE resource_id = $1", [lowerMarkerResource])).rows[0].count), 1);
+      await pool.query("SELECT ps8_test_set_time(ps8_now() + interval '120 days')");
+      assert.equal((await maintenance()).markersPurged, 0);
+      await pool.query("SELECT ps8_test_set_time(ps8_now() + interval '1 microsecond')");
+      const lowerMarkerPurge = await maintenance();
+      assert.deepEqual(
+        { markersPurged: lowerMarkerPurge.markersPurged, retainedFloor: lowerMarkerPurge.retainedFloor },
+        { markersPurged: 1, retainedFloor: higherSequence + 1 },
+      );
+
+      const withM3a = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>;
+      await writeFile(target, `${JSON.stringify({ ...withM3a, experimentalM3bR1: {
+        status: "executed-uncommitted",
+        startedAt: r1StartedAt,
+        policy: {
+          payloadWindow: "P30D", connectedOfflineWindow: "P90D",
+          configuredExtendedGraveyardWindow: "P120D", endpointTimeAuthoritative: true,
+        },
+        commandIds: {
+          commandRetentionRace: retentionRaceCommand.commandId,
+          postCommitRevokedRetry: postCommitRevocationCommand.commandId,
+          postCommitLaterProgress: postCommitLaterProgress.commandId,
+          purgedTarget: purgedTargetCommand.commandId,
+          staleIncarnation: oldIncarnationCommand.commandId,
+          laterProgress: afterIncarnationConflict.commandId,
+          extendedRetentionDelete: extendedDelete.commandId,
+        },
+        outcomes: {
+          graveyardContainsPayload: false,
+          securityDefinerTempShadowBlocked: true,
+          commandRetentionLockOrder: "command-committed-before-retention",
+          limitedWriterSoftDeleteRetentionOverlap: "serialized-state-counter-no-deadlock",
+          postCommitRevokedRetry: "derived-terminal-denial",
+          postCommitAppliedReceiptRemainedImmutable: true,
+          postCommitLaterProgress: "applied",
+          purgedTargetTerminalDenial: true,
+          exactP30DPayloadRetained: true, afterP30DPayloadCleared: true,
+          exactP90DMarkerRetained: true, afterP90DMarkerPurged: true,
+          reuseWhileRetained: "rejected", replacementIncarnationGeneration: 2,
+          staleIncarnation: oldIncarnationResult.result_code,
+          staleIncarnationReplay: "terminal", changedReplay: "idempotency_conflict",
+          laterQueueProgress: "applied", firstRetainedFloor: 2,
+          exactP90DExtendedMarkerRetained: true,
+          afterP90DExtendedClientResetRequired: true,
+          exactP120DMarkerRetained: true, afterP120DMarkerPurged: true,
+          extendedRetentionFloor: extendedSequence + 1,
+          outOfOrderHigherMarkerPurgedFirst: true,
+          lowerRetainedMarkerNotSkipped: true,
+          finalRetainedFloor: higherSequence + 1,
+          maintenanceIdempotent: true,
+        },
+        unvalidated: [
+          "trusted-replica-registration-and-checkpoint",
+          "restart-and-offline-after-pull",
+          "capacity-and-backpressure",
+          "encryption-and-native-runtime",
+        ],
         sanitized: true,
       } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     } finally {

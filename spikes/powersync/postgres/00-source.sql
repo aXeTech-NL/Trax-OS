@@ -8,6 +8,10 @@ CREATE ROLE ps8_token_reader WITH LOGIN PASSWORD 'trax-ps8-token-reader-only';
 CREATE ROLE ps8_command_writer WITH LOGIN PASSWORD 'trax-ps8-command-writer-only';
 GRANT CONNECT ON DATABASE powersync_spike TO ps8_replication, ps8_storage, ps8_token_reader, ps8_command_writer;
 GRANT CREATE ON DATABASE powersync_spike TO ps8_storage;
+-- SECURITY DEFINER helpers must not resolve attacker-created temporary objects.
+-- PowerSync storage demonstrably needs TEMPORARY; command/token/replication roles do not.
+REVOKE TEMPORARY ON DATABASE powersync_spike FROM PUBLIC;
+GRANT TEMPORARY ON DATABASE powersync_spike TO ps8_storage;
 
 CREATE TABLE users (
     id uuid PRIMARY KEY,
@@ -73,11 +77,12 @@ CREATE TABLE party_memberships (
 
 CREATE TABLE resources (
     id uuid PRIMARY KEY,
+    resource_incarnation_id uuid NOT NULL UNIQUE,
     workspace_id uuid NOT NULL,
     journey_id uuid NOT NULL,
     audience text NOT NULL,
     party_id uuid,
-    payload text NOT NULL,
+    payload text,
     version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
     deleted_at timestamptz,
 
@@ -99,7 +104,7 @@ CREATE TABLE ps8_command_receipts (
     resource_id uuid NOT NULL,
     digest text NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
     result_state text NOT NULL CHECK (result_state IN ('applied', 'conflict', 'denied')),
-    result_code text NOT NULL CHECK (result_code IN ('applied', 'optimistic_conflict', 'command_denied')),
+    result_code text NOT NULL CHECK (result_code IN ('applied', 'optimistic_conflict', 'stale_incarnation', 'command_denied')),
     previous_version bigint NOT NULL CHECK (previous_version > 0),
     current_version bigint NOT NULL CHECK (current_version > 0),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -110,7 +115,7 @@ CREATE TABLE ps8_command_change_events (
     event_id uuid PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES users(id),
     command_id uuid NOT NULL,
-    resource_id uuid NOT NULL REFERENCES resources(id),
+    resource_id uuid NOT NULL,
     event_ordinal integer NOT NULL CHECK (event_ordinal >= 0),
     event_type text NOT NULL CHECK (event_type IN ('ps8.resource.update.v1', 'ps8.resource.soft_delete.v1')),
     resulting_version bigint NOT NULL CHECK (resulting_version > 1),
@@ -121,6 +126,37 @@ CREATE TABLE ps8_command_change_events (
 -- This server-maintained projection makes every contributing active flag
 -- explicit while keeping clients unable to supply scope. It is spike-only
 -- policy evidence, not a proposed production authorization table.
+-- Experimental M3b-R1 retention state is server-only. It intentionally does
+-- not model trusted replica registration/checkpoints; that remains an R2 gate.
+CREATE TABLE ps8_resource_graveyard (
+    resource_id uuid PRIMARY KEY,
+    resource_incarnation_id uuid NOT NULL UNIQUE,
+    final_version bigint NOT NULL CHECK (final_version > 1),
+    workspace_id uuid NOT NULL,
+    journey_id uuid NOT NULL,
+    audience text NOT NULL CHECK (audience IN ('journey', 'party')),
+    party_id uuid,
+    deleted_at timestamptz NOT NULL,
+    deletion_sequence bigint NOT NULL UNIQUE CHECK (deletion_sequence > 0),
+    CHECK (
+        (audience = 'journey' AND party_id IS NULL)
+        OR (audience = 'party' AND party_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE ps8_retention_state (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    effective_now timestamptz NOT NULL,
+    graveyard_retention interval NOT NULL DEFAULT interval '90 days'
+        CHECK (graveyard_retention >= interval '90 days'),
+    retained_graveyard_floor bigint NOT NULL DEFAULT 1
+        CHECK (retained_graveyard_floor > 0),
+    next_deletion_sequence bigint NOT NULL DEFAULT 1
+        CHECK (next_deletion_sequence > 0)
+);
+INSERT INTO ps8_retention_state (singleton, effective_now)
+VALUES (true, '2026-01-01T00:00:00Z');
+
 CREATE TABLE sync_grants (
     resource_id uuid NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -175,20 +211,255 @@ INSERT INTO party_memberships (workspace_id, journey_id, party_id, user_id) VALU
     ('11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', '33333333-3333-4333-8333-333333333302', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3'),
     ('22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', '44444444-4444-4444-8444-444444444303', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4');
 
-INSERT INTO resources (id, workspace_id, journey_id, audience, party_id, payload) VALUES
-    ('55555555-5555-4555-8555-555555555501', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'journey', NULL, 'MARKER_W1_J1_SHARED'),
-    ('55555555-5555-4555-8555-555555555502', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'party', '33333333-3333-4333-8333-333333333301', 'MARKER_PARTY_ALPHA_PRIVATE'),
-    ('55555555-5555-4555-8555-555555555503', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'party', '33333333-3333-4333-8333-333333333302', 'MARKER_PARTY_BRAVO_PRIVATE'),
-    ('55555555-5555-4555-8555-555555555504', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111103', 'journey', NULL, 'MARKER_W1_SECOND_JOURNEY_ALICE_ONLY'),
-    ('66666666-6666-4666-8666-666666666601', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'journey', NULL, 'MARKER_W2_FORBIDDEN_SHARED'),
-    ('66666666-6666-4666-8666-666666666602', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'party', '44444444-4444-4444-8444-444444444303', 'MARKER_W2_FORBIDDEN_PRIVATE');
+INSERT INTO resources (id, resource_incarnation_id, workspace_id, journey_id, audience, party_id, payload) VALUES
+    ('55555555-5555-4555-8555-555555555501', '75555555-5555-4555-8555-555555555501', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'journey', NULL, 'MARKER_W1_J1_SHARED'),
+    ('55555555-5555-4555-8555-555555555502', '75555555-5555-4555-8555-555555555502', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'party', '33333333-3333-4333-8333-333333333301', 'MARKER_PARTY_ALPHA_PRIVATE'),
+    ('55555555-5555-4555-8555-555555555503', '75555555-5555-4555-8555-555555555503', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111101', 'party', '33333333-3333-4333-8333-333333333302', 'MARKER_PARTY_BRAVO_PRIVATE'),
+    ('55555555-5555-4555-8555-555555555504', '75555555-5555-4555-8555-555555555504', '11111111-1111-4111-8111-111111111111', '11111111-1111-4111-8111-111111111103', 'journey', NULL, 'MARKER_W1_SECOND_JOURNEY_ALICE_ONLY'),
+    ('66666666-6666-4666-8666-666666666601', '76666666-6666-4666-8666-666666666601', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'journey', NULL, 'MARKER_W2_FORBIDDEN_SHARED'),
+    ('66666666-6666-4666-8666-666666666602', '76666666-6666-4666-8666-666666666602', '22222222-2222-4222-8222-222222222222', '22222222-2222-4222-8222-222222222102', 'party', '44444444-4444-4444-8444-444444444303', 'MARKER_W2_FORBIDDEN_PRIVATE');
+
+CREATE FUNCTION ps8_now() RETURNS timestamptz
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+    SELECT state.effective_now
+      FROM public.ps8_retention_state AS state
+     WHERE state.singleton
+$$;
+REVOKE ALL ON FUNCTION ps8_now() FROM PUBLIC;
+
+CREATE FUNCTION ps8_test_set_time(next_time timestamptz) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE previous_effective_now timestamptz;
+BEGIN
+    IF next_time IS NULL THEN
+        RAISE EXCEPTION 'test time is required';
+    END IF;
+    SELECT state.effective_now
+      INTO previous_effective_now
+      FROM public.ps8_retention_state AS state
+     WHERE state.singleton
+     FOR UPDATE;
+    IF next_time < previous_effective_now THEN
+        RAISE EXCEPTION 'test time cannot move backwards';
+    END IF;
+    UPDATE public.ps8_retention_state AS state
+       SET effective_now = next_time
+     WHERE state.singleton;
+END;
+$$;
+REVOKE ALL ON FUNCTION ps8_test_set_time(timestamptz) FROM PUBLIC;
+
+CREATE FUNCTION ps8_test_set_graveyard_retention(next_retention interval) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+    IF next_retention IS NULL OR next_retention < interval '90 days' THEN
+        RAISE EXCEPTION 'graveyard retention cannot be shorter than P90D';
+    END IF;
+    UPDATE public.ps8_retention_state AS state
+       SET graveyard_retention = next_retention
+     WHERE state.singleton;
+END;
+$$;
+REVOKE ALL ON FUNCTION ps8_test_set_graveyard_retention(interval) FROM PUBLIC;
+
+CREATE FUNCTION ps8_guard_resource_lifecycle() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF EXISTS (
+            SELECT 1
+              FROM public.ps8_resource_graveyard AS graveyard
+             WHERE graveyard.resource_id = NEW.id
+        ) THEN
+            RAISE EXCEPTION 'resource UUID remains in the retained graveyard'
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF NEW.resource_incarnation_id IS DISTINCT FROM OLD.resource_incarnation_id THEN
+        RAISE EXCEPTION 'resource incarnation is immutable';
+    END IF;
+    IF OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+        RAISE EXCEPTION 'resource tombstone time is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION ps8_guard_resource_lifecycle() FROM PUBLIC;
+
+CREATE FUNCTION ps8_record_resource_graveyard() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+    allocated_sequence bigint;
+BEGIN
+    IF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
+        -- The singleton counter row serializes allocation through transaction
+        -- commit. The resource row is already locked before this trigger, so the
+        -- retention job must likewise touch state only after resource deletion.
+        UPDATE public.ps8_retention_state AS state
+           SET next_deletion_sequence = state.next_deletion_sequence + 1
+         WHERE state.singleton
+         RETURNING state.next_deletion_sequence - 1 INTO allocated_sequence;
+        IF allocated_sequence IS NULL THEN
+            RAISE EXCEPTION 'retention state is absent';
+        END IF;
+        INSERT INTO public.ps8_resource_graveyard (
+            resource_id, resource_incarnation_id, final_version, workspace_id,
+            journey_id, audience, party_id, deleted_at, deletion_sequence
+        ) VALUES (
+            NEW.id, NEW.resource_incarnation_id, NEW.version, NEW.workspace_id,
+            NEW.journey_id, NEW.audience, NEW.party_id, NEW.deleted_at,
+            allocated_sequence
+        );
+    END IF;
+    RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION ps8_record_resource_graveyard() FROM PUBLIC;
+
+CREATE TRIGGER ps8_guard_resource_insert
+BEFORE INSERT ON resources
+FOR EACH ROW EXECUTE FUNCTION public.ps8_guard_resource_lifecycle();
+CREATE TRIGGER ps8_guard_resource_update
+BEFORE UPDATE ON resources
+FOR EACH ROW EXECUTE FUNCTION public.ps8_guard_resource_lifecycle();
+CREATE TRIGGER ps8_record_resource_delete
+AFTER UPDATE OF deleted_at ON resources
+FOR EACH ROW EXECUTE FUNCTION public.ps8_record_resource_graveyard();
+
+CREATE FUNCTION ps8_run_retention() RETURNS TABLE (
+    payloads_cleared bigint,
+    markers_purged bigint,
+    retained_floor bigint
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+    cleared bigint;
+    purged bigint;
+    next_retained_floor bigint;
+BEGIN
+    -- Match command/revocation order: grant projection first, then the
+    -- retention-job mutex, then resource rows, and only then the counter/state
+    -- row. Graveyard triggers use resource -> state and never take this mutex,
+    -- so a limited writer cannot invert retention -> resource ordering.
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('trax-ps8-sync-grants', 0)
+    );
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('trax-ps8-retention', 0)
+    );
+
+    UPDATE public.resources AS resource
+       SET payload = NULL
+     WHERE resource.deleted_at IS NOT NULL
+       AND resource.payload IS NOT NULL
+       AND public.ps8_now() > resource.deleted_at + interval '30 days';
+    GET DIAGNOSTICS cleared = ROW_COUNT;
+
+    WITH expired AS (
+        SELECT graveyard.resource_id, graveyard.resource_incarnation_id
+          FROM public.ps8_resource_graveyard AS graveyard
+          CROSS JOIN public.ps8_retention_state AS state
+         WHERE state.singleton
+           AND public.ps8_now() > graveyard.deleted_at + state.graveyard_retention
+         FOR UPDATE OF graveyard
+    ), removed_resources AS (
+        DELETE FROM public.resources AS resource
+         USING expired
+         WHERE resource.id = expired.resource_id
+           AND resource.resource_incarnation_id = expired.resource_incarnation_id
+        RETURNING resource.id
+    ), removed_markers AS (
+        DELETE FROM public.ps8_resource_graveyard AS graveyard
+         USING expired
+         WHERE graveyard.resource_id = expired.resource_id
+           AND graveyard.resource_incarnation_id = expired.resource_incarnation_id
+        RETURNING graveyard.deletion_sequence
+    )
+    SELECT pg_catalog.count(*)
+      INTO purged
+      FROM removed_markers;
+
+    IF purged > 0 THEN
+        -- Read and update state only after resource/marker deletion. A concurrent
+        -- soft delete serializes on this row; either its marker is visible to
+        -- this statement or its allocated value is the next safe floor.
+        SELECT coalesce(
+                   pg_catalog.min(graveyard.deletion_sequence),
+                   state.next_deletion_sequence
+               )
+          INTO next_retained_floor
+          FROM public.ps8_retention_state AS state
+          LEFT JOIN public.ps8_resource_graveyard AS graveyard ON true
+         WHERE state.singleton
+         GROUP BY state.next_deletion_sequence;
+        UPDATE public.ps8_retention_state AS state
+           SET retained_graveyard_floor = greatest(
+               state.retained_graveyard_floor,
+               next_retained_floor
+           )
+         WHERE state.singleton;
+    END IF;
+
+    RETURN QUERY
+    SELECT cleared, purged, state.retained_graveyard_floor
+      FROM public.ps8_retention_state AS state
+     WHERE state.singleton;
+END;
+$$;
+REVOKE ALL ON FUNCTION ps8_run_retention() FROM PUBLIC;
+
+-- R1 deliberately evaluates only server-owned state. R2 must bind the two
+-- checkpoint arguments to an authenticated registered replica; device
+-- self-report is not trusted by this function or claimed by this spike slice.
+CREATE FUNCTION ps8_replica_reset_required(
+    last_successful_sync_at timestamptz,
+    checkpoint_sequence bigint
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+    SELECT last_successful_sync_at IS NULL
+        OR checkpoint_sequence IS NULL
+        OR public.ps8_now() > last_successful_sync_at + interval '90 days'
+        OR checkpoint_sequence < state.retained_graveyard_floor
+      FROM public.ps8_retention_state AS state
+     WHERE state.singleton
+$$;
+REVOKE ALL ON FUNCTION ps8_replica_reset_required(timestamptz, bigint) FROM PUBLIC;
 
 CREATE FUNCTION refresh_sync_grants() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('trax-ps8-sync-grants', 0));
-    DELETE FROM sync_grants;
-    INSERT INTO sync_grants (
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('trax-ps8-sync-grants', 0)
+    );
+    DELETE FROM public.sync_grants;
+    INSERT INTO public.sync_grants (
         resource_id, user_id, grant_path, workspace_id, journey_id, party_id,
         user_active, workspace_active, journey_active, party_active
     )
@@ -196,14 +467,14 @@ BEGIN
         resource.id, membership.user_id, 'journey', resource.workspace_id,
         resource.journey_id, NULL, users.active, workspace_membership.active,
         membership.active, true
-    FROM resources AS resource
-    JOIN journey_memberships AS membership
+    FROM public.resources AS resource
+    JOIN public.journey_memberships AS membership
       ON membership.workspace_id = resource.workspace_id
      AND membership.journey_id = resource.journey_id
-    JOIN workspace_memberships AS workspace_membership
+    JOIN public.workspace_memberships AS workspace_membership
       ON workspace_membership.workspace_id = membership.workspace_id
      AND workspace_membership.user_id = membership.user_id
-    JOIN users ON users.id = membership.user_id
+    JOIN public.users AS users ON users.id = membership.user_id
     WHERE resource.audience = 'journey'
     UNION ALL
     SELECT
@@ -212,42 +483,43 @@ BEGIN
         resource.journey_id, party_membership.party_id, users.active,
         workspace_membership.active, journey_membership.active,
         party_membership.active
-    FROM resources AS resource
-    JOIN party_memberships AS party_membership
+    FROM public.resources AS resource
+    JOIN public.party_memberships AS party_membership
       ON party_membership.workspace_id = resource.workspace_id
      AND party_membership.journey_id = resource.journey_id
      AND party_membership.party_id = resource.party_id
-    JOIN journey_memberships AS journey_membership
+    JOIN public.journey_memberships AS journey_membership
       ON journey_membership.workspace_id = party_membership.workspace_id
      AND journey_membership.journey_id = party_membership.journey_id
      AND journey_membership.user_id = party_membership.user_id
-    JOIN workspace_memberships AS workspace_membership
+    JOIN public.workspace_memberships AS workspace_membership
       ON workspace_membership.workspace_id = journey_membership.workspace_id
      AND workspace_membership.user_id = journey_membership.user_id
-    JOIN users ON users.id = journey_membership.user_id
+    JOIN public.users AS users ON users.id = journey_membership.user_id
     WHERE resource.audience = 'party';
     RETURN NULL;
 END;
 $$;
+REVOKE ALL ON FUNCTION refresh_sync_grants() FROM PUBLIC;
 
 CREATE TRIGGER refresh_sync_grants_users
 AFTER INSERT OR UPDATE OR DELETE ON users
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_workspaces
 AFTER INSERT OR UPDATE OR DELETE ON workspace_memberships
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_journeys
 AFTER INSERT OR UPDATE OR DELETE ON journey_memberships
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_parties
 AFTER INSERT OR UPDATE OR DELETE ON party_memberships
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_resources_insert_delete
 AFTER INSERT OR DELETE ON resources
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 CREATE TRIGGER refresh_sync_grants_resources_scope_update
 AFTER UPDATE OF workspace_id, journey_id, audience, party_id ON resources
-FOR EACH STATEMENT EXECUTE FUNCTION refresh_sync_grants();
+FOR EACH STATEMENT EXECUTE FUNCTION public.refresh_sync_grants();
 
 -- Populate the projection once after fixture creation through the same trigger
 -- path exercised by revocation updates.
@@ -261,14 +533,16 @@ CREATE FUNCTION ps8_acquire_grant_read_lock()
 RETURNS void
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public, pg_temp
 AS $$
-    SELECT pg_advisory_xact_lock_shared(hashtextextended('trax-ps8-sync-grants', 0))
+    SELECT pg_catalog.pg_advisory_xact_lock_shared(
+        pg_catalog.hashtextextended('trax-ps8-sync-grants', 0)
+    )
 $$;
 REVOKE ALL ON FUNCTION ps8_acquire_grant_read_lock() FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA public TO ps8_replication, ps8_token_reader, ps8_command_writer;
-GRANT EXECUTE ON FUNCTION ps8_acquire_grant_read_lock() TO ps8_command_writer;
+GRANT EXECUTE ON FUNCTION ps8_acquire_grant_read_lock(), ps8_now() TO ps8_command_writer;
 GRANT SELECT ON resources, sync_grants TO ps8_replication;
 GRANT SELECT (id, active) ON users TO ps8_token_reader;
 GRANT SELECT ON resources, sync_grants, ps8_command_receipts TO ps8_command_writer;

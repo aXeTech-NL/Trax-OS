@@ -126,6 +126,40 @@ mkdir -p "$RUN_DIRECTORY" "$EVIDENCE_DIRECTORY"
 printf '%s|%s' "$COMPOSE_PROJECT_NAME" "$PS8_RUN_ID" > "$PS8_OWNER_FILE"
 chmod 600 "$PS8_OWNER_FILE"
 
+# Evidence permissions are an enforced wrapper invariant, independent of the
+# caller's umask. Reject symbolic/special entries rather than silently retaining
+# an artifact whose access mode cannot be attested.
+enforce_evidence_permissions() {
+  node - "$EVIDENCE_DIRECTORY" <<'NODE'
+const fs = require('node:fs');
+const root = process.argv[2];
+function secure(directory) {
+  fs.chmodSync(directory, 0o700);
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const target = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) secure(target);
+    else if (entry.isFile()) fs.chmodSync(target, 0o600);
+    else throw new Error(`Unsupported evidence entry type: ${target}`);
+  }
+}
+function verify(directory) {
+  const directoryMode = fs.statSync(directory).mode & 0o777;
+  if (directoryMode !== 0o700) throw new Error(`Evidence directory mode is ${directoryMode.toString(8)}, expected 700: ${directory}`);
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const target = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) verify(target);
+    else if (entry.isFile()) {
+      const mode = fs.statSync(target).mode & 0o777;
+      if (mode !== 0o600) throw new Error(`Evidence artifact mode is ${mode.toString(8)}, expected 600: ${target}`);
+    } else throw new Error(`Unsupported evidence entry type: ${target}`);
+  }
+}
+secure(root);
+verify(root);
+NODE
+}
+enforce_evidence_permissions
+
 COMPOSE=(
   docker compose
   --project-name "$COMPOSE_PROJECT_NAME"
@@ -138,6 +172,10 @@ CLEANED=0
 cleanup_on_exit() {
   local status=$?
   trap - EXIT
+  if [[ -d "$EVIDENCE_DIRECTORY" ]] && ! enforce_evidence_permissions; then
+    echo "Mandatory Issue #8 evidence permission enforcement failed." >&2
+    status=1
+  fi
   if [[ "$CLEANED" != "1" && "${PS8_KEEP_STACK:-0}" != "1" ]]; then
     if ! "$SPIKE_DIR/scripts/clean.sh"; then
       echo "Mandatory Issue #8 cleanup failed." >&2
@@ -158,12 +196,14 @@ trap cleanup_on_exit EXIT
 "${COMPOSE[@]}" up --build --detach --wait
 "${COMPOSE[@]}" images --format json > "$EVIDENCE_DIRECTORY/compose-images.json"
 "${COMPOSE[@]}" ps --format json > "$EVIDENCE_DIRECTORY/compose-ps.json"
+enforce_evidence_permissions
 
 export PS8_PINNED_RUN=1
 export PS8_TOKEN_URL="http://127.0.0.1:$PS8_TOKEN_PORT"
 export PS8_COMMAND_URL="http://127.0.0.1:$PS8_COMMAND_PORT"
 export PS8_POWERSYNC_URL="http://127.0.0.1:$PS8_POWERSYNC_PORT"
 export PS8_DATABASE_URL="postgres://${PS8_POSTGRES_USER:-postgres}:${PS8_POSTGRES_PASSWORD:-trax-ps8-postgres-only}@127.0.0.1:$PS8_POSTGRES_PORT/${PS8_POSTGRES_DB:-powersync_spike}"
+export PS8_COMMAND_DATABASE_URL="postgres://${PS8_COMMAND_WRITER_USER:-ps8_command_writer}:${PS8_COMMAND_WRITER_PASSWORD:-trax-ps8-command-writer-only}@127.0.0.1:$PS8_POSTGRES_PORT/${PS8_POSTGRES_DB:-powersync_spike}"
 export PS8_RUNTIME_DIR="$RUN_DIRECTORY/replicas"
 export PS8_EVIDENCE_DIR="$EVIDENCE_DIRECTORY"
 INTEGRATION_TRANSCRIPT="$EVIDENCE_DIRECTORY/integration-test.tap.log"
@@ -271,5 +311,6 @@ PS8_EVIDENCE_CONTEXT_FILE="$CONTEXT_FILE" \
 PS8_EVIDENCE_OBSERVATIONS_FILE="$EVIDENCE_DIRECTORY/integration-observations.json" \
 PS8_EVIDENCE_DIR="$EVIDENCE_DIRECTORY" \
 "${NPM10[@]}" run record:evidence --prefix "$HARNESS_DIR"
+enforce_evidence_permissions
 
 printf 'Issue #8 candidate evidence retained under %s\n' "$EVIDENCE_DIRECTORY"

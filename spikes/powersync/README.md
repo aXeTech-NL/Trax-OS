@@ -1,6 +1,6 @@
 # Issue #8 PowerSync feasibility spike
 
-**Status:** disposable Phase 0 candidate evidence; committed M2 scoped download/revocation plus experimental M3a command-upload mechanics
+**Status:** disposable Phase 0 candidate evidence; committed M2/M3a mechanics plus experimental uncommitted M3b-R1 retention/incarnation mechanics
 
 This sibling harness exercises the real self-hosted PowerSync service and the official Node client against a spike-only PostgreSQL model. It does not import Trax OS production code or establish a production sync architecture.
 
@@ -16,6 +16,7 @@ This sibling harness exercises the real self-hosted PowerSync service and the of
 - An SDK-tracked, insert-only `command_queue` uploads only strict experimental update and soft-delete commands through a separately hardened loopback command server. Replicated `resources` remain read-only to the normal harness flow.
 - The experimental server derives actor and current workspace/Journey/party scope from the JWT and PostgreSQL, serializes grant evaluation against relationship revocation, commits mutation/receipt/change event atomically, reauthorizes every retry before receipt lookup, records digest-bound denial receipts, rejects changed idempotency payloads, and retains bounded logical tombstones.
 - The harness observes local overlay state while an injected pre-commit failure remains queued, overlay removal after terminal results, later unrelated progress, canonical convergence, post-commit response-drop retry, competing optimistic outcomes and stale-resurrection rejection. Local result persistence and SDK queue completion are separate SQLite transactions; server receipts make interruption retry-safe, but the harness does not claim local atomicity.
+- Experimental M3b-R1 binds commands to immutable resource incarnation UUIDs and exercises a server-only payload-free graveyard, deterministic endpoint time, exact/after-P30D payload purge, exact/after-P90D marker purge, monotonic retention floor, UUID-reuse protection and a terminal stale-incarnation receipt that permits later queue progress. A P120D marker setting is checked independently from the fixed P90D connected-client support predicate.
 
 The M3a endpoint, envelope, tables, command names and completion policy are spike-only facsimiles. They do not define or freeze Issue #14, implement production Issue #45, or establish Issue #46 queue/conflict behavior.
 
@@ -23,7 +24,7 @@ A pre-revocation JWT can authenticate until expiry, but active server relationsh
 
 ## Explicit non-goals
 
-This harness does not test production commands, create/restore/purge, tombstone expiry, capacity bounds, service restart, native clients, encryption, TLS, production RLS/policy equivalence, upgrades or rollback. It does not validate Android, Capacitor, Tauri or macOS support. Tombstones are retained only for the bounded run. The repository has selected a [`P90D` minimal-graveyard plus stale-replica-reset policy](../../docs/architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary), but expiry, quarantine and reset are not implemented or tested here. The root `compose.yaml`, application schema, Alembic history and generated contracts are untouched.
+This harness does not test production commands, create/restore, capacity bounds, service restart, native clients, encryption, TLS, production RLS/policy equivalence, upgrades or rollback. It does not validate Android, Capacitor, Tauri or macOS support. M3b-R1 tests only deterministic disposable retention/incarnation primitives for the selected [`P90D` minimal-graveyard plus stale-replica-reset policy](../../docs/architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary). It does not issue or trust a PowerSync replica checkpoint, register a device credential, perform a real replica reset/quarantine, or claim restart/capacity/native acceptance; those remain R2-R5 gates. The root `compose.yaml`, application schema, Alembic history and generated contracts are untouched.
 
 ## Pinned inputs
 
@@ -52,7 +53,7 @@ spikes/powersync/scripts/verify-provenance.sh
 spikes/powersync/scripts/run.sh
 ```
 
-`run.sh` generates a UUID run identity, distinct per-principal credentials, an ownership marker and a unique Compose project. It enforces Node 22/npm 10.9.4, performs locked installation, compilation, unit tests, Compose validation, digest-pinned pulls, readiness-gated startup and the real M2/M3a integration tests. Initial sync requires a completed checkpoint; timeouts reject and close the partial replica.
+`run.sh` generates a UUID run identity, distinct per-principal credentials, an ownership marker and a unique Compose project. It enforces Node 22/npm 10.9.4, performs locked installation, compilation, unit tests, Compose validation, digest-pinned pulls, readiness-gated startup and the real M2/M3a plus experimental M3b-R1 integration tests. Initial sync requires a completed checkpoint; timeouts reject and close the partial replica.
 
 Runtime evidence is retained per run under ignored `spikes/powersync/.evidence/<run-id>/`. Each successful run keeps structured assertion/token-probe observations plus a credential/JWT-sanitized TAP transcript. A successful observation is recorded as `executed-uncommitted`, not immutable `passed`, and only after guarded stack/volume cleanup succeeds. Failed-run evidence is not deleted by the next run.
 

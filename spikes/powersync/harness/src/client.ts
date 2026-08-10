@@ -19,6 +19,7 @@ import {
 } from "./command-protocol.js";
 
 const resources = new Table({
+  resource_incarnation_id: column.text,
   workspace_id: column.text,
   journey_id: column.text,
   audience: column.text,
@@ -32,12 +33,14 @@ const command_queue = Table.createInsertOnly({
   command_type: column.text,
   command_version: column.integer,
   resource_id: column.text,
+  resource_incarnation_id: column.text,
   expected_record_version: column.integer,
   payload: column.text,
   upload_correlation_id: column.text,
 });
 const optimistic_resources = Table.createLocalOnly({
   resource_id: column.text,
+  resource_incarnation_id: column.text,
   command_type: column.text,
   payload: column.text,
   expected_record_version: column.integer,
@@ -55,12 +58,12 @@ const command_results = Table.createLocalOnly({
 export const spikeSchema = new Schema({ resources, command_queue, optimistic_resources, command_results });
 
 export interface UploadFaultOptions {
-  mode: "pre-commit-500" | "post-commit-drop";
+  mode: "pre-commit-500" | "post-commit-drop" | "post-commit-drop-barrier";
   secret: string;
 }
 
 const requiredQueueColumns = [
-  "command_type", "command_version", "expected_record_version", "resource_id", "upload_correlation_id",
+  "command_type", "command_version", "expected_record_version", "resource_id", "resource_incarnation_id", "upload_correlation_id",
 ] as const;
 const allowedQueueColumns = [...requiredQueueColumns, "payload"] as const;
 
@@ -78,8 +81,8 @@ export function validateQueuedCrud(crud: readonly { table: string; op: string; i
       throw new Error("Malformed command_queue PUT columns.");
     }
     if (typeof entry.id !== "string" || typeof data.command_type !== "string" || data.command_version !== 1 ||
-        typeof data.resource_id !== "string" || !Number.isSafeInteger(data.expected_record_version) ||
-        typeof data.upload_correlation_id !== "string") {
+        typeof data.resource_id !== "string" || typeof data.resource_incarnation_id !== "string" ||
+        !Number.isSafeInteger(data.expected_record_version) || typeof data.upload_correlation_id !== "string") {
       throw new Error("Malformed command_queue PUT values.");
     }
     const type = data.command_type as SpikeCommandType;
@@ -92,6 +95,7 @@ export function validateQueuedCrud(crud: readonly { table: string; op: string; i
       commandId: entry.id,
       type,
       resourceId: data.resource_id,
+      resourceIncarnationId: data.resource_incarnation_id,
       expectedRecordVersion: Number(data.expected_record_version),
       ...(type === "ps8.resource.update.v1" ? { payload: data.payload as string } : {}),
     };
@@ -105,8 +109,12 @@ export class SpikeCommandConnector implements PowerSyncBackendConnector {
     private readonly commandEndpoint: string,
     private readonly deviceId: string,
     private readonly localDatabaseFilename: string,
-    private readonly fault?: UploadFaultOptions,
+    private fault?: UploadFaultOptions,
   ) {}
+
+  setUploadFault(fault?: UploadFaultOptions): void {
+    this.fault = fault;
+  }
 
   async fetchCredentials() {
     return { endpoint: this.endpoint, token: this.token };
@@ -160,7 +168,7 @@ export class SpikeCommandConnector implements PowerSyncBackendConnector {
     catch { throw new Error("Malformed spike command response."); }
     if (response.status === 403) {
       const parsed = parseCommandResponse(raw, commands);
-      if (parsed.results[0]?.state !== "denied") throw new Error("Denied command response lacks a durable denial receipt.");
+      if (parsed.results[0]?.state !== "denied") throw new Error("Denied command response lacks a digest-bound terminal result.");
       await this.persistResults(parsed.results);
       await transaction.complete();
       return;
@@ -206,13 +214,13 @@ async function closeDatabase(database: PowerSyncDatabase): Promise<void> {
   if (failures.length > 0) throw new AggregateError(failures, "PowerSync client cleanup failed.");
 }
 
-export interface RawReplicaResource extends ReplicaResource { version: number; deleted_at: string | null }
+export interface RawReplicaResource extends ReplicaResource { resource_incarnation_id: string; version: number; deleted_at: string | null }
 export interface LocalCommandResult {
   id: string; resource_id: string; state: "applied" | "conflict" | "denied" | "failed";
   result_code: string; previous_version: number; current_version: number; attempt_number: number;
 }
-export interface QueuedCommandInput { commandId: string; type: SpikeCommandType; resourceId: string; expectedRecordVersion: number; payload?: string }
-export interface OptimisticResource { id: string; resource_id: string; command_type: string; payload: string | null; expected_record_version: number }
+export interface QueuedCommandInput { commandId: string; type: SpikeCommandType; resourceId: string; resourceIncarnationId?: string; expectedRecordVersion: number; payload?: string }
+export interface OptimisticResource { id: string; resource_id: string; resource_incarnation_id: string; command_type: string; payload: string | null; expected_record_version: number }
 
 export interface SpikeClient {
   database: PowerSyncDatabase;
@@ -223,6 +231,7 @@ export interface SpikeClient {
   readCommandResults(): Promise<LocalCommandResult[]>;
   readOptimisticResources(): Promise<OptimisticResource[]>;
   uploadQueueCount(): Promise<number>;
+  setUploadFault(fault?: UploadFaultOptions): void;
   close(): Promise<void>;
 }
 
@@ -234,9 +243,10 @@ export async function openSpikeClient(options: {
   await mkdir(options.runtimeDirectory, { recursive: true });
   const filename = `${options.name}.db`;
   const database = new PowerSyncDatabase({ schema: spikeSchema, database: { dbFilename: filename, dbLocation: options.runtimeDirectory } });
+  const connector = new SpikeCommandConnector(options.endpoint, options.token, options.commandEndpoint ?? "http://127.0.0.1:1", options.name, path.join(options.runtimeDirectory, filename), options.uploadFault);
   try {
     await database.connect(
-      new SpikeCommandConnector(options.endpoint, options.token, options.commandEndpoint ?? "http://127.0.0.1:1", options.name, path.join(options.runtimeDirectory, filename), options.uploadFault),
+      connector,
       { params: options.forgedConnectionParams, retryDelayMs: 100 },
     );
     await waitForInitialSync(database, options.firstSyncTimeoutMs ?? 30_000);
@@ -248,31 +258,41 @@ export async function openSpikeClient(options: {
     database,
     filename: path.join(options.runtimeDirectory, filename),
     async readResources() { return database.getAll<ReplicaResource>("SELECT id, payload FROM resources WHERE deleted_at IS NULL ORDER BY id"); },
-    async readRawResources() { return database.getAll<RawReplicaResource>("SELECT id, payload, version, deleted_at FROM resources ORDER BY id"); },
+    async readRawResources() { return database.getAll<RawReplicaResource>("SELECT id, resource_incarnation_id, payload, version, deleted_at FROM resources ORDER BY id"); },
     async queueCommands(commands, correlationId = crypto.randomUUID()) {
       if (commands.length !== 1) throw new Error("The M3a local transaction requires exactly one command.");
       if (new Set(commands.map((command) => command.commandId)).size !== commands.length) throw new Error("Duplicate command ID in one local transaction.");
       if (new Set(commands.map((command) => command.resourceId)).size !== commands.length) throw new Error("Duplicate resource target in one local transaction.");
+      const boundCommands = await Promise.all(commands.map(async (command) => {
+        if (command.resourceIncarnationId) return { ...command, resourceIncarnationId: command.resourceIncarnationId };
+        const rows = await database.getAll<{ resource_incarnation_id: string }>(
+          "SELECT resource_incarnation_id FROM resources WHERE id = ?",
+          [command.resourceId],
+        );
+        if (rows.length !== 1) throw new Error("Cannot bind a command without one replicated resource incarnation.");
+        return { ...command, resourceIncarnationId: rows[0]!.resource_incarnation_id };
+      }));
       await database.writeTransaction(async (tx) => {
-        for (const command of commands) {
+        for (const command of boundCommands) {
           const payload = command.type === "ps8.resource.update.v1" ? command.payload : null;
           await tx.execute(
             `INSERT INTO command_queue
-               (id, command_type, command_version, resource_id, expected_record_version, payload, upload_correlation_id)
-             VALUES (?, ?, 1, ?, ?, ?, ?)`,
-            [command.commandId, command.type, command.resourceId, command.expectedRecordVersion, payload, correlationId],
+               (id, command_type, command_version, resource_id, resource_incarnation_id, expected_record_version, payload, upload_correlation_id)
+             VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+            [command.commandId, command.type, command.resourceId, command.resourceIncarnationId, command.expectedRecordVersion, payload, correlationId],
           );
           await tx.execute(
             `INSERT OR REPLACE INTO optimistic_resources
-               (id, resource_id, command_type, payload, expected_record_version) VALUES (?, ?, ?, ?, ?)`,
-            [command.commandId, command.resourceId, command.type, payload, command.expectedRecordVersion],
+               (id, resource_id, resource_incarnation_id, command_type, payload, expected_record_version) VALUES (?, ?, ?, ?, ?, ?)`,
+            [command.commandId, command.resourceId, command.resourceIncarnationId, command.type, payload, command.expectedRecordVersion],
           );
         }
       });
     },
     async readCommandResults() { return database.getAll<LocalCommandResult>("SELECT id, resource_id, state, result_code, previous_version, current_version, attempt_number FROM command_results ORDER BY id"); },
-    async readOptimisticResources() { return database.getAll<OptimisticResource>("SELECT id, resource_id, command_type, payload, expected_record_version FROM optimistic_resources ORDER BY id"); },
+    async readOptimisticResources() { return database.getAll<OptimisticResource>("SELECT id, resource_id, resource_incarnation_id, command_type, payload, expected_record_version FROM optimistic_resources ORDER BY id"); },
     async uploadQueueCount() { return (await database.getUploadQueueStats()).count; },
+    setUploadFault(fault) { connector.setUploadFault(fault); },
     async close() { await closeDatabase(database); },
   };
 }

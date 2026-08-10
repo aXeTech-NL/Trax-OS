@@ -17,7 +17,7 @@ import {
   writeEvidenceEntry,
   type EvidenceEntry,
 } from "../src/evidence.js";
-import { expectedResources, ids, type Principal } from "../src/fixtures.js";
+import { expectedResources, ids, resourceIncarnations, type Principal } from "../src/fixtures.js";
 import { tamperJwtSignature } from "../src/jwt-test.js";
 import {
   parseTokenRequest,
@@ -147,6 +147,7 @@ test("experimental command protocol rejects authority, batches and mismatched re
     commandId: "77777777-7777-4777-8777-777777777701",
     type: "ps8.resource.update.v1" as const,
     resourceId: ids.resources.sharedOne,
+    resourceIncarnationId: resourceIncarnations[ids.resources.sharedOne]!,
     expectedRecordVersion: 1,
     payload: "bounded replacement",
   };
@@ -165,6 +166,11 @@ test("experimental command protocol rejects authority, batches and mismatched re
     /digest mismatch/,
   );
   assert.equal(commandDigest(command).length, 64);
+  assert.notEqual(
+    commandDigest(command),
+    commandDigest({ ...command, resourceIncarnationId: "79999999-9999-4999-8999-999999999999" }),
+  );
+  assert.doesNotThrow(() => parseCommandResponse({ spikeProtocol: 1, results: [{ commandId: command.commandId, resourceId: command.resourceId, digest: commandDigest(command), state: "conflict", code: "stale_incarnation", previousVersion: 1, currentVersion: 1, attemptNumber: 1 }] }, [command]));
 });
 
 test("queue CRUD validation accepts only strict insert-only command PUTs", () => {
@@ -176,6 +182,7 @@ test("queue CRUD validation accepts only strict insert-only command PUTs", () =>
       command_type: "ps8.resource.soft_delete.v1",
       command_version: 1,
       resource_id: ids.resources.sharedOne,
+      resource_incarnation_id: resourceIncarnations[ids.resources.sharedOne],
       expected_record_version: 1,
       payload: null,
       upload_correlation_id: "test",

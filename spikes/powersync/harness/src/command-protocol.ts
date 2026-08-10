@@ -11,6 +11,7 @@ export interface SpikeCommand {
   commandId: string;
   type: SpikeCommandType;
   resourceId: string;
+  resourceIncarnationId: string;
   expectedRecordVersion: number;
   payload?: string;
 }
@@ -27,7 +28,7 @@ export interface SpikeCommandResult {
   resourceId: string;
   digest: string;
   state: "applied" | "conflict" | "denied";
-  code: "applied" | "already_applied" | "optimistic_conflict" | "command_denied";
+  code: "applied" | "already_applied" | "optimistic_conflict" | "stale_incarnation" | "command_denied";
   previousVersion: number;
   currentVersion: number;
   attemptNumber: number;
@@ -80,11 +81,13 @@ export function parseCommandEnvelope(value: unknown): SpikeCommandEnvelope {
   const commandIds = new Set<string>();
   const commands = input.commands.map((raw, index): SpikeCommand => {
     const command = record(raw, `commands[${index}]`);
-    exactKeys(command, ["commandId", "type", "resourceId", "expectedRecordVersion", "payload"], `commands[${index}]`);
+    exactKeys(command, ["commandId", "type", "resourceId", "resourceIncarnationId", "expectedRecordVersion", "payload"], `commands[${index}]`);
     const commandId = boundedString(command.commandId, "commandId", 36).toLowerCase();
     const resourceId = boundedString(command.resourceId, "resourceId", 36).toLowerCase();
+    const resourceIncarnationId = boundedString(command.resourceIncarnationId, "resourceIncarnationId", 36).toLowerCase();
     if (!commandUuid.test(commandId)) throw new Error("commandId must be a version-4 UUID.");
     if (!uuid.test(resourceId)) throw new Error("resourceId must be a UUID.");
+    if (!uuid.test(resourceIncarnationId)) throw new Error("resourceIncarnationId must be a UUID.");
     if (!supportedCommandTypes.includes(command.type as SpikeCommandType)) throw new Error("Unsupported spike command type.");
     const type = command.type as SpikeCommandType;
     if (!Number.isSafeInteger(command.expectedRecordVersion) || Number(command.expectedRecordVersion) < 1) {
@@ -97,7 +100,7 @@ export function parseCommandEnvelope(value: unknown): SpikeCommandEnvelope {
     if (targets.has(resourceId)) throw new Error("A transaction cannot contain duplicate resource targets.");
     commandIds.add(commandId);
     targets.add(resourceId);
-    return { commandId, type, resourceId, expectedRecordVersion: Number(command.expectedRecordVersion), ...(payload === undefined ? {} : { payload }) };
+    return { commandId, type, resourceId, resourceIncarnationId, expectedRecordVersion: Number(command.expectedRecordVersion), ...(payload === undefined ? {} : { payload }) };
   });
   return { spikeProtocol, deviceId, localTransactionId, commands };
 }
@@ -107,6 +110,7 @@ export function commandDigest(command: SpikeCommand): string {
     commandId: command.commandId,
     type: command.type,
     resourceId: command.resourceId,
+    resourceIncarnationId: command.resourceIncarnationId,
     expectedRecordVersion: command.expectedRecordVersion,
     payload: command.payload ?? null,
   });
@@ -127,8 +131,8 @@ export function parseCommandResponse(value: unknown, commands: readonly SpikeCom
     if (!command || result.resourceId !== command.resourceId || result.digest !== commandDigest(command)) throw new Error("Command result identity or digest mismatch.");
     expected.delete(command.commandId);
     if (result.state !== "applied" && result.state !== "conflict" && result.state !== "denied") throw new Error("Unknown command result state.");
-    if (!["applied", "already_applied", "optimistic_conflict", "command_denied"].includes(String(result.code))) throw new Error("Unknown command result code.");
-    const expectedState = result.code === "optimistic_conflict" ? "conflict" : result.code === "command_denied" ? "denied" : "applied";
+    if (!["applied", "already_applied", "optimistic_conflict", "stale_incarnation", "command_denied"].includes(String(result.code))) throw new Error("Unknown command result code.");
+    const expectedState = result.code === "optimistic_conflict" || result.code === "stale_incarnation" ? "conflict" : result.code === "command_denied" ? "denied" : "applied";
     if (result.state !== expectedState) throw new Error("Inconsistent command result state and code.");
     for (const field of ["previousVersion", "currentVersion", "attemptNumber"] as const) {
       if (!Number.isSafeInteger(result[field]) || Number(result[field]) < 1) throw new Error(`Invalid ${field}.`);

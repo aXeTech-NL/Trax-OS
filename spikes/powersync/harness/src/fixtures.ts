@@ -30,6 +30,16 @@ export const ids = {
   },
 } as const;
 
+export const resourceIncarnations: Readonly<Record<string, string>> = {
+  [ids.resources.sharedOne]: "75555555-5555-4555-8555-555555555501",
+  [ids.resources.alphaPrivate]: "75555555-5555-4555-8555-555555555502",
+  [ids.resources.bravoPrivate]: "75555555-5555-4555-8555-555555555503",
+  [ids.resources.aliceOnlySameWorkspaceJourney]:
+    "75555555-5555-4555-8555-555555555504",
+  [ids.resources.sharedTwo]: "76666666-6666-4666-8666-666666666601",
+  [ids.resources.charliePrivate]: "76666666-6666-4666-8666-666666666602",
+};
+
 export type Principal = keyof typeof ids.users;
 
 export const expectedResources: Record<Principal, readonly string[]> = {
