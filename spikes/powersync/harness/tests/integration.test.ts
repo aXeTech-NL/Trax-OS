@@ -10,7 +10,7 @@ import {
   pollUntil,
   type ReplicaResource,
 } from "../src/assertions.js";
-import { openSpikeClient, type SpikeClient } from "../src/client.js";
+import { openSpikeClient, spikeCapacityLimits, type SpikeClient } from "../src/client.js";
 import {
   expectedCaseyAfterAlphaRevocation,
   expectedResources,
@@ -954,7 +954,7 @@ test(
       assert.equal(Number(competingCanonical.rows[0].version), 2);
       assert.ok(["M3A_CONCURRENT_A", "M3A_CONCURRENT_B"].includes(competingCanonical.rows[0].payload));
 
-      const preCommitClient = await openSpikeClient({ name: `precommit-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob, uploadFault: { mode: "pre-commit-500", secret: faultSecret } });
+      const preCommitClient = await openSpikeClient({ name: `precommit-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.bob, uploadFault: { mode: "pre-commit-hold", secret: faultSecret } });
       clients.push(preCommitClient);
       const preCommitCommand = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: ids.resources.bravoPrivate, expectedRecordVersion: 1, payload: "M3A_MUST_NOT_APPLY" };
       await preCommitClient.queueCommands([preCommitCommand]);
@@ -1486,7 +1486,8 @@ test(
           [resource.id, resource.incarnation, ids.workspaces.one, ids.journeys.one, resource.audience, resource.party, resource.payload],
         );
       }
-      const resetClient = await openSpikeClient({ name: `r2-quarantine-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice, uploadFault: { mode: "pre-commit-500", secret: faultSecret } });
+      const resetClientName = `r2-quarantine-${runId}`;
+      let resetClient = await openSpikeClient({ name: resetClientName, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint, token: tokens.alice, uploadFault: { mode: "pre-commit-hold", secret: faultSecret } });
       clients.push(resetClient);
       assert.equal((await stat(resetClient.applicationStateSidecarPath())).mode & 0o777, 0o600);
       assert.equal((await stat(path.dirname(resetClient.applicationStateSidecarPath()))).mode & 0o777, 0o700);
@@ -1586,6 +1587,365 @@ test(
       assert.ok(!postResetReplica.some((row) => row.id === quarantineResources.revoked.id));
       assert.ok(postResetReplica.some((row) => row.id === quarantineResources.replaced.id && row.resource_incarnation_id === replacementAfterReset));
       await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2", [ids.users.alice, ids.parties.alpha]);
+
+      const r3StartedAt = new Date().toISOString();
+
+      // A second reset discovers application-sidecar crash residue that never
+      // reached the public SDK CRUD queue. Full intent survives only when the
+      // current grant and resource incarnation still match. Prior quarantine
+      // is merged without replacement or automatic eviction.
+      const firstResetQuarantine = (await resetClient.readQuarantinedCommands()).map((entry) => ({ ...entry }));
+      const orphanResources = {
+        authorized:{ id:randomUUID(),incarnation:randomUUID(),audience:"journey",party:null,payload:"M3B_R3_ORPHAN_AUTH_RESOURCE" },
+        revoked:{ id:randomUUID(),incarnation:randomUUID(),audience:"party",party:ids.parties.alpha,payload:"M3B_R3_ORPHAN_REVOKED_RESOURCE" },
+        replaced:{ id:randomUUID(),incarnation:randomUUID(),audience:"journey",party:null,payload:"M3B_R3_ORPHAN_REPLACED_RESOURCE" },
+        trigger:{ id:randomUUID(),incarnation:randomUUID(),audience:"journey",party:null,payload:"M3B_R3_SECOND_RESET_TRIGGER" },
+      } as const;
+      for (const resource of Object.values(orphanResources)) {
+        await pool.query(
+          `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,1)`,
+          [resource.id,resource.incarnation,ids.workspaces.one,ids.journeys.one,resource.audience,resource.party,resource.payload],
+        );
+      }
+      const orphanCommands = (Object.entries(orphanResources).filter(([key]) => key !== "trigger") as Array<
+        ["authorized"|"revoked"|"replaced", typeof orphanResources.authorized]
+      >).map(([key,resource]) => ({
+        key,commandId:randomUUID(),type:"ps8.resource.update.v1" as const,resourceId:resource.id,
+        resourceIncarnationId:resource.incarnation,expectedRecordVersion:1,payload:`M3B_R3_ORPHAN_INTENT_${key.toUpperCase()}`,
+      }));
+      for (const command of orphanCommands) await resetClient.testInjectOrphanOverlay(command);
+      assert.equal(await resetClient.uploadQueueCount(),0);
+      assert.equal((await resetClient.readOptimisticResources()).length,3);
+      const secondResetTrigger = {
+        commandId:randomUUID(),type:"ps8.resource.update.v1" as const,resourceId:orphanResources.trigger.id,
+        resourceIncarnationId:orphanResources.trigger.incarnation,expectedRecordVersion:1,payload:"M3B_R3_SECOND_RESET_QUEUED",
+      };
+      resetClient.setUploadFault({ mode:"pre-commit-hold",secret:faultSecret });
+      await resetClient.queueCommands([secondResetTrigger]);
+      await waitForAttempt(secondResetTrigger.commandId);
+      const beforeSecondResetSession = resetClient.testReplicaSecret()!;
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1) + interval '90 days 1 microsecond')", [beforeSecondResetSession.replicaId]);
+      resetClient.setUploadFault(undefined);
+      await pollUntil("second reset required",async () => resetClient.resetRequired(),value => value,15_000,25);
+      const orphanReplacementIncarnation = randomUUID();
+      await resetClient.performReplicaReset({ async afterQuarantineWritten() {
+        await pool.query("UPDATE party_memberships SET active=false WHERE user_id=$1 AND party_id=$2", [ids.users.alice,ids.parties.alpha]);
+        await pool.query("DELETE FROM resources WHERE id=$1", [orphanResources.replaced.id]);
+        await pool.query(
+          `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+           VALUES ($1,$2,$3,$4,'journey',NULL,'M3B_R3_ORPHAN_REPLACEMENT',1)`,
+          [orphanResources.replaced.id,orphanReplacementIncarnation,ids.workspaces.one,ids.journeys.one],
+        );
+      }});
+      const secondResetQuarantine = await resetClient.readQuarantinedCommands();
+      assert.equal(secondResetQuarantine.length,firstResetQuarantine.length + 4);
+      for (const prior of firstResetQuarantine) {
+        assert.deepEqual(secondResetQuarantine.find((entry) => entry.id === prior.id),prior);
+      }
+      const orphanById = new Map(secondResetQuarantine.map((entry) => [entry.id,entry]));
+      const authorizedOrphan = orphanById.get(orphanCommands.find((command) => command.key === "authorized")!.commandId)!;
+      assert.deepEqual(
+        { state:authorizedOrphan.state,payload:authorizedOrphan.payload,exportable:authorizedOrphan.exportable,
+          expected:authorizedOrphan.expected_record_version },
+        { state:"pending_review",payload:orphanCommands.find((command) => command.key === "authorized")!.payload,
+          exportable:1,expected:1 },
+      );
+      for (const command of orphanCommands.filter((candidate) => candidate.key !== "authorized")) {
+        const invalidated = orphanById.get(command.commandId)!;
+        assert.deepEqual({ state:invalidated.state,payload:invalidated.payload,exportable:invalidated.exportable },
+          { state:"invalidated",payload:null,exportable:0 });
+      }
+      assert.equal(await resetClient.uploadQueueCount(),0);
+      assert.equal((await resetClient.readOptimisticResources()).length,0);
+      await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2", [ids.users.alice,ids.parties.alpha]);
+
+      // Persisted finalized quarantine is loaded on a new client object. This
+      // is not a claim that an unfinished destructive reset can resume across
+      // process restart; such pending state fails closed on open.
+      clients.splice(clients.indexOf(resetClient),1);
+      await resetClient.close();
+      resetClient = await openSpikeClient({ name:resetClientName,runtimeDirectory,endpoint:powerSyncEndpoint,commandEndpoint,token:tokens.alice });
+      clients.push(resetClient);
+      assert.deepEqual(await resetClient.readQuarantinedCommands(),secondResetQuarantine);
+      assert.equal((await resetClient.outstandingCapacity()).count,secondResetQuarantine.length);
+      const finalizedCollision = secondResetQuarantine.find((entry) => entry.state === "pending_review")!;
+      const finalizedCollisionVersion = finalizedCollision.expected_record_version;
+      if (finalizedCollisionVersion === null) throw new Error("New R3 quarantine must retain a positive expected version.");
+      const beforeFinalizedCollision = await resetClient.outstandingCapacity();
+      const finalizedCollisionCommand = {
+        commandId:finalizedCollision.id,type:finalizedCollision.command_type as "ps8.resource.update.v1",
+        resourceId:finalizedCollision.resource_id,resourceIncarnationId:finalizedCollision.resource_incarnation_id,
+        expectedRecordVersion:finalizedCollisionVersion,payload:finalizedCollision.payload ?? "MUST_NOT_REQUEUE",
+      };
+      await assert.rejects(resetClient.queueCommands([finalizedCollisionCommand]),/command_id_already_active/);
+      await assert.rejects(resetClient.testInjectOrphanOverlay(finalizedCollisionCommand),/command_id_already_active/);
+      assert.deepEqual(await resetClient.outstandingCapacity(),beforeFinalizedCollision);
+      assert.equal(await resetClient.uploadQueueCount(),0);
+      assert.deepEqual(await resetClient.readQuarantinedCommands(),secondResetQuarantine);
+
+      // Simulate 58 more crash residues beside seven persisted entries. The
+      // resulting N+1 reset is rejected before clear; explicit acknowledgement
+      // of one prior item then admits exactly 64 without evicting the rest.
+      const bulkOrphans = Array.from({ length:58 },(_,index) => ({
+        commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:orphanResources.authorized.id,resourceIncarnationId:orphanResources.authorized.incarnation,
+        expectedRecordVersion:1,payload:`M3B_R3_BULK_ORPHAN_${index}`,
+      }));
+      resetClient.setUploadFault({ mode:"pre-commit-hold",secret:faultSecret });
+      await resetClient.queueCommands([bulkOrphans[0]!]);
+      await waitForAttempt(bulkOrphans[0]!.commandId);
+      for (const command of bulkOrphans.slice(1)) await resetClient.testInjectOrphanOverlay(command,true);
+      const beforeCapacityResetSession = resetClient.testReplicaSecret()!;
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1) + interval '90 days 1 microsecond')", [beforeCapacityResetSession.replicaId]);
+      resetClient.setUploadFault(undefined);
+      await pollUntil("capacity reset required",async () => resetClient.resetRequired(),value => value,15_000,25);
+      const replicaBeforeBlockedReset = await resetClient.readRawResources();
+      await assert.rejects(resetClient.performReplicaReset(),/quarantine_capacity_exceeded/);
+      assert.equal(await resetClient.uploadQueueCount(),1);
+      assert.equal((await resetClient.readOptimisticResources()).length,58);
+      assert.deepEqual(await resetClient.readQuarantinedCommands(),secondResetQuarantine);
+      assert.deepEqual(await resetClient.readRawResources(),replicaBeforeBlockedReset);
+      const acknowledgedQuarantineId = secondResetQuarantine[0]!.id;
+      assert.equal(await resetClient.acknowledgeOrDiscardQuarantinedCommand(acknowledgedQuarantineId),true);
+      assert.equal(await resetClient.acknowledgeOrDiscardQuarantinedCommand(acknowledgedQuarantineId),false);
+      await resetClient.performReplicaReset();
+      const exactCombinedQuarantine = await resetClient.readQuarantinedCommands();
+      assert.equal(exactCombinedQuarantine.length,spikeCapacityLimits.maxOutstandingCommandsAndResults);
+      assert.ok(!exactCombinedQuarantine.some((entry) => entry.id === acknowledgedQuarantineId));
+      for (const prior of secondResetQuarantine.filter((entry) => entry.id !== acknowledgedQuarantineId)) {
+        assert.deepEqual(exactCombinedQuarantine.find((entry) => entry.id === prior.id),prior);
+      }
+      assert.equal(await resetClient.uploadQueueCount(),0);
+      assert.equal((await resetClient.readOptimisticResources()).length,0);
+      assert.equal((await resetClient.outstandingCapacity()).count,spikeCapacityLimits.maxOutstandingCommandsAndResults);
+
+      const r3RetainedTombstone = { id: randomUUID(), incarnation: randomUUID() };
+      await pool.query(
+        `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+         VALUES ($1,$2,$3,$4,'journey',NULL,'M3B_R3_RETAINED_TOMBSTONE',1)`,
+        [r3RetainedTombstone.id, r3RetainedTombstone.incarnation, ids.workspaces.one, ids.journeys.one],
+      );
+      await pool.query("UPDATE resources SET deleted_at=ps8_now(),version=2 WHERE id=$1", [r3RetainedTombstone.id]);
+      const graveyardBeforeR3 = Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count);
+      assert.ok(graveyardBeforeR3 > 0);
+
+      // Runtime callers cannot bypass the expected-version invariant through
+      // TypeScript casts or direct programmatic input. Rejection happens before
+      // application-state, SDK-queue or quarantine mutation, and the empty
+      // state remains valid when reopened.
+      const invalidVersionClientName = `r3-invalid-version-${runId}`;
+      const invalidExpectedVersions = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1];
+      const invalidVersionClient = await openSpikeClient({
+        name:invalidVersionClientName, runtimeDirectory, endpoint:powerSyncEndpoint,
+        commandEndpoint, token:tokens.eve,
+      });
+      try {
+        for (const expectedRecordVersion of invalidExpectedVersions) {
+          await assert.rejects(
+            invalidVersionClient.queueCommands([{
+              commandId:randomUUID(), type:"ps8.resource.update.v1", resourceId:randomUUID(),
+              resourceIncarnationId:randomUUID(), expectedRecordVersion, payload:"MUST_NOT_PERSIST",
+            }]),
+            /expectedRecordVersion must be a positive safe integer/,
+          );
+        }
+        assert.deepEqual(await invalidVersionClient.outstandingCapacity(),{ count:0,bytes:0 });
+        assert.equal(await invalidVersionClient.uploadQueueCount(),0);
+        assert.deepEqual(await invalidVersionClient.readOptimisticResources(),[]);
+        assert.deepEqual(await invalidVersionClient.readCommandResults(),[]);
+        assert.deepEqual(await invalidVersionClient.readQuarantinedCommands(),[]);
+      } finally {
+        await invalidVersionClient.close();
+      }
+      const reopenedInvalidVersionClient = await openSpikeClient({
+        name:invalidVersionClientName, runtimeDirectory, endpoint:powerSyncEndpoint,
+        commandEndpoint, token:tokens.eve,
+      });
+      clients.push(reopenedInvalidVersionClient);
+      assert.deepEqual(await reopenedInvalidVersionClient.outstandingCapacity(),{ count:0,bytes:0 });
+      assert.equal(await reopenedInvalidVersionClient.uploadQueueCount(),0);
+      assert.deepEqual(await reopenedInvalidVersionClient.readOptimisticResources(),[]);
+      assert.deepEqual(await reopenedInvalidVersionClient.readCommandResults(),[]);
+      assert.deepEqual(await reopenedInvalidVersionClient.readQuarantinedCommands(),[]);
+
+      // Five retryable failures become one explicit terminal local result;
+      // the server never mutated, and unrelated later work progresses.
+      const retryExhaustionResource = randomUUID();
+      const retryExhaustionIncarnation = randomUUID();
+      await pool.query(
+        `INSERT INTO resources (id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+         VALUES ($1,$2,$3,$4,'journey',NULL,'M3B_R3_RETRY_ORIGINAL',1)`,
+        [retryExhaustionResource, retryExhaustionIncarnation, ids.workspaces.one, ids.journeys.one],
+      );
+      const retryExhaustionClient = await openSpikeClient({
+        name: `r3-retry-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint,
+        token: tokens.bob, uploadFault: { mode: "pre-commit-500", secret: faultSecret },
+      });
+      clients.push(retryExhaustionClient);
+      const exhaustedCommand = {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: retryExhaustionResource, resourceIncarnationId: retryExhaustionIncarnation,
+        expectedRecordVersion: 1, payload: "M3B_R3_MUST_NOT_APPLY",
+      };
+      await retryExhaustionClient.queueCommands([exhaustedCommand]);
+      const exhaustedResult = await waitForResult(retryExhaustionClient, exhaustedCommand.commandId);
+      assert.deepEqual(
+        { code: exhaustedResult.result_code, attempts: exhaustedResult.attempt_number },
+        { code: "retry_exhausted", attempts: 5 },
+      );
+      assert.deepEqual(
+        (await pool.query("SELECT payload,version FROM resources WHERE id=$1", [retryExhaustionResource])).rows[0],
+        { payload: "M3B_R3_RETRY_ORIGINAL", version: "1" },
+      );
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=$1", [exhaustedCommand.commandId])).rows[0].count), 0);
+      retryExhaustionClient.setUploadFault(undefined);
+      await pollUntil("retry-exhausted SDK completion",() => retryExhaustionClient.resultByteAccounting(exhaustedCommand.commandId),
+        value => value?.sdkCompleted === true,5_000,20);
+      assert.equal(await retryExhaustionClient.uploadQueueCount(), 0);
+      assert.equal(await retryExhaustionClient.acknowledgeCommandResult(exhaustedCommand.commandId), true);
+      const retryLaterCommand = { ...exhaustedCommand, commandId: randomUUID(), payload: "M3B_R3_LATER_PROGRESS" };
+      await retryExhaustionClient.queueCommands([retryLaterCommand]);
+      assert.equal((await waitForResult(retryExhaustionClient, retryLaterCommand.commandId)).result_code, "applied");
+
+      // A terminal result cannot free capacity until the public SDK queue
+      // completion succeeds. The injected hold is after result persistence.
+      const acknowledgementClient = await openSpikeClient({
+        name:`r3-ack-${runId}`,runtimeDirectory,endpoint:powerSyncEndpoint,commandEndpoint,token:tokens.alice,
+        uploadFault:{ mode:"post-result-hold",secret:faultSecret },
+      });
+      clients.push(acknowledgementClient);
+      const acknowledgementCommand = { ...retryLaterCommand,commandId:randomUUID(),expectedRecordVersion:2,
+        payload:"M3B_R3_ACK_AFTER_SDK_COMPLETE" };
+      await acknowledgementClient.queueCommands([acknowledgementCommand]);
+      await pollUntil("result persisted before SDK completion",async () => ({
+        held:acknowledgementClient.completionIsHeld(),result:(await acknowledgementClient.readCommandResults())[0],
+      }),value => value.held && value.result?.id === acknowledgementCommand.commandId,15_000,25);
+      assert.equal(await acknowledgementClient.uploadQueueCount(),1);
+      assert.equal(await acknowledgementClient.acknowledgeCommandResult(acknowledgementCommand.commandId),false);
+      const beforeCompletionAccounting = await acknowledgementClient.resultByteAccounting(acknowledgementCommand.commandId);
+      assert.equal(beforeCompletionAccounting?.sdkCompleted,false);
+      assert.ok((beforeCompletionAccounting?.actualBytes ?? Infinity) <= (beforeCompletionAccounting?.reservedBytes ?? 0));
+      acknowledgementClient.releaseCompletionHold();
+      await pollUntil("SDK completion marks result acknowledgeable",async () => ({
+        queue:await acknowledgementClient.uploadQueueCount(),accounting:await acknowledgementClient.resultByteAccounting(acknowledgementCommand.commandId),
+      }),value => value.queue === 0 && value.accounting?.sdkCompleted === true,15_000,25);
+      assert.equal(await acknowledgementClient.acknowledgeCommandResult(acknowledgementCommand.commandId),true);
+      assert.equal((await acknowledgementClient.outstandingCapacity()).count,0);
+
+      // The application sidecar counts pending overlays and unresolved terminal
+      // results together. Exact 64 is accepted under concurrent callers; the
+      // 65th is rejected without SDK/overlay mutation. Acknowledgement frees one.
+      const capacityClient = await openSpikeClient({
+        name: `r3-capacity-${runId}`, runtimeDirectory, endpoint: powerSyncEndpoint, commandEndpoint,
+        token: tokens.bob, uploadFault: { mode: "pre-commit-hold", secret: faultSecret },
+      });
+      clients.push(capacityClient);
+      const capacityReplica = rememberReplica(capacityClient);
+      const capacityCommands = Array.from({ length: spikeCapacityLimits.maxOutstandingCommandsAndResults }, () => ({
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const, resourceId: randomUUID(),
+        resourceIncarnationId: randomUUID(), expectedRecordVersion: 1, payload: "R3_BOUNDED",
+      }));
+      await capacityClient.queueCommands([capacityCommands[0]!]);
+      const originalOverlay = (await capacityClient.readOptimisticResources())[0]!;
+      const originalQueueCount = await capacityClient.uploadQueueCount();
+      const originalUsage = await capacityClient.outstandingCapacity();
+      await assert.rejects(capacityClient.queueCommands([{ ...capacityCommands[0]!,payload:"R3_DUPLICATE_MUST_NOT_OVERWRITE" }]), /command_id_already_active/);
+      assert.deepEqual((await capacityClient.readOptimisticResources())[0],originalOverlay);
+      assert.equal(await capacityClient.uploadQueueCount(),originalQueueCount);
+      assert.deepEqual(await capacityClient.outstandingCapacity(),originalUsage);
+      const concurrentDuplicate = await Promise.allSettled([
+        capacityClient.queueCommands([capacityCommands[1]!] ),
+        capacityClient.queueCommands([{ ...capacityCommands[1]!,payload:"R3_CONCURRENT_DUPLICATE" }]),
+      ]);
+      assert.equal(concurrentDuplicate.filter((outcome) => outcome.status === "fulfilled").length,1);
+      assert.equal(concurrentDuplicate.filter((outcome) => outcome.status === "rejected" &&
+        String(outcome.reason).includes("command_id_already_active")).length,1);
+      assert.equal((await capacityClient.readOptimisticResources()).filter((entry) => entry.id === capacityCommands[1]!.commandId).length,1);
+      await Promise.all(capacityCommands.slice(2).map((command) => capacityClient.queueCommands([command])));
+      const exactCapacityUsage = await capacityClient.outstandingCapacity();
+      assert.equal(exactCapacityUsage.count, spikeCapacityLimits.maxOutstandingCommandsAndResults);
+      assert.ok(exactCapacityUsage.bytes > 0 && exactCapacityUsage.bytes <= spikeCapacityLimits.maxSerializedOutstandingBytes);
+      const plusOneCommand = { ...capacityCommands[0]!, commandId: randomUUID(), resourceId: randomUUID(), resourceIncarnationId: randomUUID() };
+      await assert.rejects(capacityClient.queueCommands([plusOneCommand]), /command_capacity_exceeded/);
+      assert.equal((await capacityClient.readOptimisticResources()).length, 64);
+      capacityClient.setUploadFault(undefined);
+      await pollUntil("64 terminal capacity results and completed SDK queue", async () => ({
+        results: await capacityClient.readCommandResults(), queue: await capacityClient.uploadQueueCount(),
+        first:await capacityClient.resultByteAccounting(capacityCommands[0]!.commandId),
+      }), (state) => state.results.length === 64 && state.queue === 0 && state.first?.sdkCompleted === true, 30_000, 50);
+      assert.equal((await capacityClient.readCommandResults()).filter((row) => row.state === "denied").length, 64);
+      const unresolvedBefore = (await capacityClient.readCommandResults()).find((row) => row.id === capacityCommands[1]!.commandId);
+      await assert.rejects(capacityClient.queueCommands([{ ...capacityCommands[1]!,payload:"R3_RESULT_ID_COLLISION" }]), /command_id_already_active/);
+      assert.deepEqual((await capacityClient.readCommandResults()).find((row) => row.id === capacityCommands[1]!.commandId),unresolvedBefore);
+      assert.equal(await capacityClient.uploadQueueCount(),0);
+      await assert.rejects(capacityClient.queueCommands([plusOneCommand]), /command_capacity_exceeded/);
+      assert.equal(await capacityClient.acknowledgeCommandResult(capacityCommands[0]!.commandId), true);
+      await testControl(`rate/${capacityReplica.replicaId}/reset`, "POST");
+      await capacityClient.queueCommands([plusOneCommand]);
+      assert.equal((await waitForResult(capacityClient, plusOneCommand.commandId)).result_code, "command_denied");
+      assert.equal((await capacityClient.outstandingCapacity()).count, 64);
+
+      // A DB-backed one-row window accepts exactly 64 authenticated command
+      // requests, returns 429 before receipt/mutation for +1, then recovers.
+      const rateReplica = await registerTestReplica(tokens.eve);
+      replicaCredentialById.set(rateReplica.replicaId, rateReplica.credential);
+      await challengeAndAck(tokens.eve, rateReplica);
+      const invalidRateProbe = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: randomUUID(), resourceIncarnationId: randomUUID(), expectedRecordVersion: 1, payload: "R3_INVALID_CREDENTIAL" };
+      assert.equal((await commandRequest(tokens.eve, commandBody(invalidRateProbe, rateReplica), {
+        "x-ps8-replica-credential": `r2_${randomBytes(32).toString("base64url")}`,
+      })).status, 403);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_rate_windows WHERE replica_id=$1", [rateReplica.replicaId])).rows[0].count), 0);
+      for (let index = 0; index < 64; index += 1) {
+        const denied = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+          resourceId: randomUUID(), resourceIncarnationId: randomUUID(), expectedRecordVersion: 1, payload: "R3_RATE" };
+        assert.equal((await commandRequest(tokens.eve, commandBody(denied, rateReplica))).status, 403);
+      }
+      const ratePlusOne = { commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: randomUUID(), resourceIncarnationId: randomUUID(), expectedRecordVersion: 1, payload: "R3_RATE_PLUS_ONE" };
+      assert.deepEqual(await commandRequest(tokens.eve, commandBody(ratePlusOne, rateReplica)), {
+        status: 429, body: { error: "command_rate_limited" },
+      });
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=$1", [ratePlusOne.commandId])).rows[0].count), 0);
+      assert.equal(Number((await pool.query("SELECT request_count FROM ps8_command_rate_windows WHERE replica_id=$1", [rateReplica.replicaId])).rows[0].request_count), 64);
+      await testControl(`rate/${rateReplica.replicaId}/reset`, "POST");
+      assert.equal((await commandRequest(tokens.eve, commandBody(ratePlusOne, rateReplica))).status, 403);
+
+      // Four distinct replicas hold all process-local command slots after
+      // authorisation. The fifth receives retryable 503 without a receipt and
+      // succeeds after slots are released.
+      const concurrencyReplicas: TestReplicaSession[] = [];
+      for (let index = 0; index < 5; index += 1) {
+        const replica = await registerTestReplica(tokens.casey);
+        replicaCredentialById.set(replica.replicaId, replica.credential);
+        await challengeAndAck(tokens.casey, replica);
+        concurrencyReplicas.push(replica);
+      }
+      const concurrencyCommands = concurrencyReplicas.map((replica, index) => ({ replica, command: {
+        commandId: randomUUID(), type: "ps8.resource.update.v1" as const,
+        resourceId: quarantineResources.authorized.id, resourceIncarnationId: quarantineResources.authorized.incarnation,
+        expectedRecordVersion: 1, payload: `R3_CONCURRENCY_${index}`,
+      }}));
+      const heldRequests = concurrencyCommands.slice(0, 4).map(({ replica, command }) =>
+        commandRequest(tokens.casey, commandBody(command, replica), { "x-ps8-fault":"authorization-barrier", "x-ps8-fault-secret":faultSecret }));
+      for (const { command } of concurrencyCommands.slice(0, 4)) {
+        await pollUntil(`R3 concurrency barrier ${command.commandId}`, () => testControl(`barriers/${command.commandId}`), (body) => body.reached === true, 10_000, 25);
+      }
+      const fifth = concurrencyCommands[4]!;
+      assert.deepEqual(await commandRequest(tokens.casey, commandBody(fifth.command, fifth.replica)), {
+        status: 503, body: { error: "command_concurrency_backpressure" },
+      });
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_receipts WHERE command_id=$1", [fifth.command.commandId])).rows[0].count), 0);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_command_rate_windows WHERE replica_id=$1", [fifth.replica.replicaId])).rows[0].count), 0);
+      for (const { command } of concurrencyCommands.slice(0, 4)) await testControl(`barriers/${command.commandId}/release`, "POST");
+      assert.deepEqual((await Promise.all(heldRequests)).map((result) => result.status), [200, 200, 200, 200]);
+      assert.equal((await commandRequest(tokens.casey, commandBody(fifth.command, fifth.replica))).status, 200);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count), graveyardBeforeR3);
+      assert.deepEqual(
+        (await pool.query("SELECT resource_incarnation_id,final_version FROM ps8_resource_graveyard WHERE resource_id=$1", [r3RetainedTombstone.id])).rows[0],
+        { resource_incarnation_id: r3RetainedTombstone.incarnation, final_version: "2" },
+      );
 
       const beforeLimit = Number((await pool.query("SELECT count(*) AS count FROM ps8_replicas WHERE user_id=$1", [ids.users.alice])).rows[0].count);
       assert.ok(beforeLimit <= 16);
@@ -1700,8 +2060,72 @@ test(
         ],
         sanitized: true,
       } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+
+      const withR2 = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>;
+      await writeFile(target, `${JSON.stringify({ ...withR2, experimentalM3bR3: {
+        status: "executed-uncommitted",
+        startedAt: r3StartedAt,
+        limits: {
+          outstandingCommandsAndResults: spikeCapacityLimits.maxOutstandingCommandsAndResults,
+          serializedOutstandingBytes: spikeCapacityLimits.maxSerializedOutstandingBytes,
+          transientUploadAttempts: spikeCapacityLimits.maxTransientUploadAttempts,
+          terminalResultReservationBytes: spikeCapacityLimits.terminalResultReservationBytes,
+          applicationStateSchemaVersion: spikeCapacityLimits.applicationStateSchemaVersion,
+          concurrentCommandRequests: 4,
+          authenticatedCommandRequestsPerReplicaMinute: 64,
+        },
+        outcomes: {
+          exactClientBoundaryAccepted: true,
+          clientPlusOneRejected: "command_capacity_exceeded",
+          invalidExpectedVersionRejections: invalidExpectedVersions.length,
+          invalidExpectedVersionMutationCount: 0,
+          invalidExpectedVersionReopenSucceeded: true,
+          duplicateAdmissionPreservedOriginalQueueAndOverlay: true,
+          concurrentDuplicateAdmissionsRejected: concurrentDuplicate.filter((outcome) => outcome.status === "rejected").length,
+          unresolvedResultIdCollisionRejected: true,
+          finalizedQuarantineIdCollisionRejected: true,
+          orphanOverlayIntentsDiscovered: orphanCommands.length,
+          authorizedOrphanPendingReview: authorizedOrphan.state === "pending_review",
+          revokedOrReplacedOrphanPayloadsRetained: orphanCommands.filter((command) =>
+            command.key !== "authorized" && orphanById.get(command.commandId)?.payload !== null).length,
+          priorQuarantinePreservedAcrossSecondReset: firstResetQuarantine.length,
+          persistedFinalizedQuarantineLoadedOnOpen: true,
+          resetNPlusOneBlockedBeforeClear: true,
+          explicitQuarantineAcknowledgementFreedCapacity: true,
+          exactCombinedQuarantineAfterRepeatedReset: exactCombinedQuarantine.length,
+          minimumQuarantineReservationBytes: spikeCapacityLimits.terminalResultReservationBytes,
+          acknowledgementBeforeSdkCompletion: "rejected",
+          acknowledgementAfterSdkCompletion: "accepted",
+          appliedResultActualBytes: beforeCompletionAccounting?.actualBytes,
+          appliedResultReservedBytes: beforeCompletionAccounting?.reservedBytes,
+          acknowledgementFreedCapacity: true,
+          retryExhaustedAt: exhaustedResult.attempt_number,
+          retryExhaustedCode: exhaustedResult.result_code,
+          retryLaterProgress: "applied",
+          serverExactRateBoundaryAccepted: 64,
+          serverPlusOneHttpStatus: 429,
+          concurrentSlotsHeld: 4,
+          concurrentPlusOneHttpStatus: 503,
+          concurrencyRecovery: "accepted",
+          rateWindowRowsPerReplica: 1,
+          tombstonesPreserved: true,
+          graveyardMarkersBefore: graveyardBeforeR3,
+          graveyardMarkersAfter: Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count),
+          automaticallyEvictedResults: 0,
+          automaticallyRequeuedQuarantineCommands: 0,
+        },
+        unvalidated: [
+          "production-sizing-and-multi-node-fairness",
+          "distributed-rate-limiter",
+          "cross-process-restart-and-offline-after-pull",
+          "quarantine-encryption-and-native-runtime",
+        ],
+        sanitized: true,
+      } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
       const retainedObservation = await readFile(target, "utf8");
       assert.ok(!/r2_[A-Za-z0-9_-]{43}/.test(retainedObservation));
+      assert.ok(!retainedObservation.includes("R3_BOUNDED"));
+      assert.ok(!retainedObservation.includes("R3_RATE"));
     } finally {
       await closeAllAndPool(clients, pool);
     }

@@ -193,6 +193,16 @@ CREATE TABLE ps8_replica_challenges (
 CREATE UNIQUE INDEX ps8_replica_challenges_current_idx
     ON ps8_replica_challenges(replica_id, replica_epoch);
 
+-- One bounded mutable rate-window row per registered replica. This is a
+-- disposable single-node feasibility limiter, not production sizing/fairness.
+CREATE TABLE ps8_command_rate_windows (
+    replica_id uuid PRIMARY KEY REFERENCES ps8_replicas(replica_id) ON DELETE CASCADE,
+    replica_epoch bigint NOT NULL CHECK (replica_epoch > 0),
+    window_started_at timestamptz NOT NULL,
+    request_count integer NOT NULL CHECK (request_count > 0 AND request_count <= 64)
+);
+CREATE INDEX ps8_command_rate_windows_expiry_idx ON ps8_command_rate_windows(window_started_at);
+
 CREATE TABLE sync_grants (
     resource_id uuid NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -585,6 +595,7 @@ GRANT SELECT ON resources, sync_grants, ps8_command_receipts TO ps8_command_writ
 GRANT SELECT ON ps8_retention_state TO ps8_command_writer;
 GRANT SELECT, INSERT, UPDATE ON ps8_replicas TO ps8_command_writer;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ps8_replica_challenges TO ps8_command_writer;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ps8_command_rate_windows TO ps8_command_writer;
 GRANT UPDATE (payload, version, deleted_at) ON resources TO ps8_command_writer;
 GRANT INSERT ON ps8_command_receipts, ps8_command_change_events TO ps8_command_writer;
 

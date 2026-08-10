@@ -26,11 +26,38 @@ const audience = "powersync-dev";
 const jwks = createRemoteJWKSet(new URL(jwksUrl));
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 8, connectionTimeoutMillis: 5_000, query_timeout: 5_000, statement_timeout: 5_000 });
 const attempts = new Map<string, number>();
+const maxRetainedTestAttemptKeys = 1_024;
+function recordTestAttempt(key: string): number {
+  if (!attempts.has(key) && attempts.size >= maxRetainedTestAttemptKeys) {
+    const oldest = attempts.keys().next().value as string | undefined;
+    if (oldest) attempts.delete(oldest);
+  }
+  const next = (attempts.get(key) ?? 0) + 1;
+  attempts.set(key, next);
+  return next;
+}
 const dropped = new Set<string>();
+function addBoundedTestKey(target: Set<string>, key: string): void {
+  if (!target.has(key) && target.size >= maxRetainedTestAttemptKeys) {
+    const oldest = target.values().next().value as string | undefined;
+    if (oldest) target.delete(oldest);
+  }
+  target.add(key);
+}
 interface AuthorizationBarrier { reached: boolean; release: () => void; wait: Promise<void> }
 const authorizationBarriers = new Map<string, AuthorizationBarrier>();
 const droppedResetResponses = new Set<string>();
 const maxReplicasPerUser = 16;
+const maxConcurrentCommandRequests = 4;
+const maxCommandRequestsPerMinute = 64;
+let concurrentCommandRequests = 0;
+
+function acquireCommandSlot(): (() => void) | undefined {
+  if (concurrentCommandRequests >= maxConcurrentCommandRequests) return undefined;
+  concurrentCommandRequests += 1;
+  let released = false;
+  return () => { if (!released) { released = true; concurrentCommandRequests -= 1; } };
+}
 
 function testAuthorized(request: IncomingMessage): boolean {
   return request.headers["x-ps8-fault-secret"] === faultSecret;
@@ -44,9 +71,13 @@ function createAuthorizationBarrier(commandId: string): AuthorizationBarrier {
   return barrier;
 }
 
-function json(response: ServerResponse, status: number, body: object): void {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+function json(response: ServerResponse, status: number, body: object, headers: Record<string, string> = {}): void {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers });
   response.end(`${JSON.stringify(body)}\n`);
+}
+
+function retryableJson(response: ServerResponse, status: 429 | 503, error: string): void {
+  json(response, status, { error }, { "retry-after": "1" });
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
@@ -126,6 +157,45 @@ async function lockReplica(client: PoolClient, userId: string, binding: ReplicaB
   if (!row || row.user_id !== userId || row.disabled_at !== null || Number(row.replica_epoch) !== binding.replicaEpoch || !credentialMatches(row.credential_digest, digest)) return undefined;
   return { row, stale: replicaIsStale(row) };
 }
+async function consumeCommandRateWindow(
+  userId: string,
+  binding: ReplicaBinding,
+  credential: string,
+): Promise<"accepted" | "invalid" | "stale" | "limited"> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const replica = await lockReplica(client, userId, binding, credential);
+    if (!replica) { await client.query("ROLLBACK"); return "invalid"; }
+    if (replica.stale) { await client.query("ROLLBACK"); return "stale"; }
+    const result = await client.query(
+      `INSERT INTO ps8_command_rate_windows (replica_id, replica_epoch, window_started_at, request_count)
+       VALUES ($1, $2, ps8_now(), 1)
+       ON CONFLICT (replica_id) DO UPDATE SET
+         replica_epoch = EXCLUDED.replica_epoch,
+         window_started_at = CASE
+           WHEN ps8_command_rate_windows.replica_epoch <> EXCLUDED.replica_epoch
+             OR ps8_now() >= ps8_command_rate_windows.window_started_at + interval '1 minute'
+           THEN ps8_now() ELSE ps8_command_rate_windows.window_started_at END,
+         request_count = CASE
+           WHEN ps8_command_rate_windows.replica_epoch <> EXCLUDED.replica_epoch
+             OR ps8_now() >= ps8_command_rate_windows.window_started_at + interval '1 minute'
+           THEN 1 ELSE ps8_command_rate_windows.request_count + 1 END
+       WHERE ps8_command_rate_windows.replica_epoch <> EXCLUDED.replica_epoch
+          OR ps8_now() >= ps8_command_rate_windows.window_started_at + interval '1 minute'
+          OR ps8_command_rate_windows.request_count < $3
+       RETURNING request_count`,
+      [binding.replicaId, binding.replicaEpoch, maxCommandRequestsPerMinute],
+    );
+    if (result.rows.length !== 1) { await client.query("ROLLBACK"); return "limited"; }
+    await client.query("COMMIT");
+    return "accepted";
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch { /* original wins */ }
+    throw error;
+  } finally { client.release(); }
+}
+
 function receiptColumns(): string {
   return "command_id, replica_id, replica_epoch, resource_id, digest, result_state, result_code, previous_version, current_version";
 }
@@ -420,12 +490,13 @@ async function lifecycleRequest(request: IncomingMessage, response: ServerRespon
              acknowledged_sequence=NULL, reset_at=ps8_now() WHERE replica_id=$1`,
           [binding.replicaId, targetEpoch, sha256(nextCredential), resetRequestId],
         );
+        await client.query("DELETE FROM ps8_command_rate_windows WHERE replica_id=$1", [binding.replicaId]);
         return { kind: "reset", session: { replicaId: binding.replicaId, replicaEpoch: targetEpoch, credential: nextCredential } };
       });
       if (outcome.kind === "invalid") json(response, 403, { error: "invalid_replica" });
       else if (outcome.kind === "current") json(response, 409, { error: "replica_not_stale" });
       else if (request.headers["x-ps8-fault"] === "reset-post-commit-drop" && testAuthorized(request) && !droppedResetResponses.has(resetRequestId)) {
-        droppedResetResponses.add(resetRequestId); response.destroy();
+        addBoundedTestKey(droppedResetResponses, resetRequestId); response.destroy();
       } else json(response, 200, outcome.session!);
       return true;
     }
@@ -462,7 +533,8 @@ const server = createServer(async (request, response) => {
     }
     const attemptMatch = url.pathname.match(/^\/spike\/test\/attempts\/([0-9a-f-]{36})$/);
     const barrierMatch = url.pathname.match(/^\/spike\/test\/barriers\/([0-9a-f-]{36})(?:\/(release))?$/);
-    if (attemptMatch || barrierMatch) {
+    const rateResetMatch = url.pathname.match(/^\/spike\/test\/rate\/([0-9a-f-]{36})\/reset$/);
+    if (attemptMatch || barrierMatch || rateResetMatch) {
       if (!testAuthorized(request)) {
         json(response, 404, { error: "not_found" });
         return;
@@ -487,6 +559,11 @@ const server = createServer(async (request, response) => {
         json(response, 200, { released: true });
         return;
       }
+      if (rateResetMatch && request.method === "POST") {
+        await pool.query("DELETE FROM ps8_command_rate_windows WHERE replica_id=$1", [rateResetMatch[1]]);
+        json(response, 200, { reset: true });
+        return;
+      }
       json(response, 405, { error: "method_not_allowed" });
       return;
     }
@@ -501,46 +578,60 @@ const server = createServer(async (request, response) => {
     let envelope;
     try { envelope = parseCommandEnvelope(await readJson(request)); }
     catch (error) { json(response, 400, { error: "invalid_command", message: (error as Error).message }); return; }
-    const fault = request.headers["x-ps8-fault"];
-    const authorizedFault = testAuthorized(request);
-    const attemptKey = `${userId}:${envelope.replicaId}:${envelope.replicaEpoch}:${envelope.commands[0]!.commandId}`;
-    const attemptNumber = (attempts.get(attemptKey) ?? 0) + 1;
-    attempts.set(attemptKey, attemptNumber);
-    if (fault === "pre-commit-500" && authorizedFault) {
-      json(response, 500, { error: "injected_pre_commit_failure" });
-      return;
-    }
-    const barrierCommandId = envelope.commands[0]!.commandId;
-    const outcome = await executeCommands(
-      userId,
-      { replicaId: envelope.replicaId, replicaEpoch: envelope.replicaEpoch },
-      replicaCredential,
-      envelope.commands,
-      attemptNumber,
-      fault === "authorization-barrier" && authorizedFault
-        ? async () => {
-            const barrier = createAuthorizationBarrier(barrierCommandId);
-            try { await barrier.wait; }
-            finally { authorizationBarriers.delete(barrierCommandId); }
-          }
-        : undefined,
-    );
-    if (
-      outcome.status === 200
-      && (fault === "post-commit-drop" || fault === "post-commit-drop-barrier")
-      && authorizedFault
-      && !dropped.has(attemptKey)
-    ) {
-      dropped.add(attemptKey);
-      if (fault === "post-commit-drop-barrier") {
-        const barrier = createAuthorizationBarrier(barrierCommandId);
-        try { await barrier.wait; }
-        finally { authorizationBarriers.delete(barrierCommandId); }
+    const releaseSlot = acquireCommandSlot();
+    if (!releaseSlot) { retryableJson(response, 503, "command_concurrency_backpressure"); return; }
+    try {
+      const binding = { replicaId: envelope.replicaId, replicaEpoch: envelope.replicaEpoch };
+      const fault = request.headers["x-ps8-fault"];
+      const authorizedFault = testAuthorized(request);
+      const rate = fault === "pre-commit-hold" && authorizedFault
+        ? "accepted"
+        : await consumeCommandRateWindow(userId, binding, replicaCredential);
+      if (rate === "invalid") { json(response, 403, { error: "invalid_replica" }); return; }
+      if (rate === "stale") { json(response, 428, { error: "replica_reset_required" }); return; }
+      if (rate === "limited") { retryableJson(response, 429, "command_rate_limited"); return; }
+      const attemptKey = `${userId}:${envelope.replicaId}:${envelope.replicaEpoch}:${envelope.commands[0]!.commandId}`;
+      const attemptNumber = recordTestAttempt(attemptKey);
+      if (fault === "pre-commit-500" && authorizedFault) {
+        json(response, 500, { error: "injected_pre_commit_failure" });
+        return;
       }
-      request.socket.destroy();
-      return;
-    }
-    json(response, outcome.status, outcome.body);
+      if (fault === "pre-commit-hold" && authorizedFault) {
+        json(response, 409, { error: "injected_pre_commit_hold" });
+        return;
+      }
+      const barrierCommandId = envelope.commands[0]!.commandId;
+      const outcome = await executeCommands(
+        userId,
+        binding,
+        replicaCredential,
+        envelope.commands,
+        attemptNumber,
+        fault === "authorization-barrier" && authorizedFault
+          ? async () => {
+              const barrier = createAuthorizationBarrier(barrierCommandId);
+              try { await barrier.wait; }
+              finally { authorizationBarriers.delete(barrierCommandId); }
+            }
+          : undefined,
+      );
+      if (
+        outcome.status === 200
+        && (fault === "post-commit-drop" || fault === "post-commit-drop-barrier")
+        && authorizedFault
+        && !dropped.has(attemptKey)
+      ) {
+        addBoundedTestKey(dropped, attemptKey);
+        if (fault === "post-commit-drop-barrier") {
+          const barrier = createAuthorizationBarrier(barrierCommandId);
+          try { await barrier.wait; }
+          finally { authorizationBarriers.delete(barrierCommandId); }
+        }
+        request.socket.destroy();
+        return;
+      }
+      json(response, outcome.status, outcome.body);
+    } finally { releaseSlot(); }
   } catch (error) {
     console.error("spike command-server request failed", error instanceof Error ? error.message : "unknown error");
     if (!response.headersSent) json(response, 500, { error: "internal_error" });
