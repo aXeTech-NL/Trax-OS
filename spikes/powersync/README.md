@@ -23,7 +23,7 @@ A pre-revocation JWT can authenticate until expiry, but active server relationsh
 
 ## Explicit non-goals
 
-This harness does not test production commands, create/restore/purge, tombstone expiry, capacity bounds, service restart, native clients, encryption, TLS, production RLS/policy equivalence, upgrades or rollback. It does not validate Android, Capacitor, Tauri or macOS support. Tombstones are retained only for the bounded run; purge/graveyard/epoch design is deferred. The root `compose.yaml`, application schema, Alembic history and generated contracts are untouched.
+This harness does not test production commands, create/restore/purge, tombstone expiry, capacity bounds, service restart, native clients, encryption, TLS, production RLS/policy equivalence, upgrades or rollback. It does not validate Android, Capacitor, Tauri or macOS support. Tombstones are retained only for the bounded run. The repository has selected a [`P90D` minimal-graveyard plus stale-replica-reset policy](../../docs/architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary), but expiry, quarantine and reset are not implemented or tested here. The root `compose.yaml`, application schema, Alembic history and generated contracts are untouched.
 
 ## Pinned inputs
 

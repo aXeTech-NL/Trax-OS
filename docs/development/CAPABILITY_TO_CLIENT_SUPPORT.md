@@ -53,6 +53,7 @@ The linked test sources and workflow establish how the current web claims are ch
 
 - **Web rationale:** Journey reads and every mutation require the server. There is no durable browser command queue, reconciliation path or runtime API cache. A future web replica needs explicit design and acceptance; native guarantees must not be inferred.
 - **Android and macOS gates:** The [#8 PowerSync spike](https://github.com/aXeTech-NL/Trax-OS/issues/8) must establish scoped replication, revocation purge, canonical command upload, supported-client feasibility, licensing and self-hosting. Canonical local commands depend on #2 and secure local storage depends on #9. Implementation, integration and offline acceptance tests are still required after the spikes ([offline and sync delivery track](IMPLEMENTATION_ROADMAP.md#11-offline-and-sync-delivery-track)). macOS additionally requires Tauri feasibility and Apple-Silicon evidence.
+- **Target offline boundary:** Connected replicas for Trax Cloud and compatible self-hosted endpoints target incremental reconciliation through exactly `P90D` after the last successful authoritative sync. Beyond that boundary, pending commands must be preserved for review/export before online replica reset and full resync. An explicitly standalone local-only workspace has no sync clock; removing an endpoint does not create that authority. This is approved target policy only: M3b implementation and native acceptance evidence are absent, so the matrix remains **Target (spike-gated)**.
 
 ### Device-only documents
 

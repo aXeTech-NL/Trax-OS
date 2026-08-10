@@ -8,7 +8,8 @@
 
 | Data class | V1 default | Behaviour at expiry |
 |---|---:|---|
-| Soft-deleted journeys and ordinary owned records | 30 days | Idempotent purge after restore window |
+| Soft-deleted journeys and ordinary owned records | 30 days | Idempotent content purge after restore window |
+| Minimal sync deletion/revocation graveyard metadata | 90 days from deletion or revocation | Purge after the connected-sync offline window; stale replicas then require reset |
 | Personal change/audit events | 2 years | Purge/redact content fields while retaining only required integrity evidence |
 | Agency change/audit events | 7 years | Purge/redact according to contract and legal basis |
 | Atlas conversations/messages | 30 days from last activity | Delete content; retain minimal tool/change audit without prompt text |
@@ -18,6 +19,18 @@
 | Support and break-glass logs | 7 years | Purge unless an active incident/legal hold applies |
 | Cancelled Personal cloud account data | Six-month export-only window | Purge within 30 days after the window ends |
 | Backups containing centrally permitted data | 35 days rolling default | Expire through backup lifecycle; document delayed deletion semantics |
+
+### Connected-sync offline support boundary
+
+The V1 connected-sync offline window is `P90D` (90 consecutive days), measured using authoritative endpoint time from the last successful authoritative sync. A successful authoritative sync is a server-issued checkpoint confirming that the replica caught up through the endpoint's retention watermark. Exactly `P90D` remains inside the boundary; a replica is stale when the elapsed time is greater than `P90D`.
+
+During this window the endpoint retains only the graveyard fields required to prevent stale resurrection, such as stable resource ID, last authoritative version, deletion/revocation time and retention checkpoint. Deleted payload is not retained for this purpose: recoverable soft-deleted content still expires after 30 days, after which the minimal non-restorable graveyard may remain through day 90.
+
+A connected replica whose checkpoint predates the retained graveyard floor, including one stale by more than `P90D`, must not upload or reconcile incrementally. Before an online replica reset and full resync, the client places still-authorised pending commands in encrypted, access-controlled quarantine or makes them explicitly exportable by the user. Commands for a revoked scope are terminally denied and securely purged under revocation policy, never made exportable. Reapplication requires explicit user review plus current authorisation, version and conflict validation. Issue #46 must define the detailed inbox, unlock/access, export-confirmation, bounded quarantine-retention and secure-deletion behaviour before implementation.
+
+The same boundary applies to Trax Cloud and compatible self-hosted endpoints. A self-hoster may retain graveyard metadata longer, but that does not expand official client support without a reviewed policy change; shortening retention below `P90D` is incompatible with the advertised V1 connected-sync boundary.
+
+Only a workspace explicitly created and kept as standalone local-only authority is exempt because it has no backend sync clock. Going offline or removing endpoint configuration does not convert a formerly connected replica into standalone local authority. Local-only encryption, recovery, export/import and later pairing remain separately gated.
 
 ## 2. Atlas conversation rules
 

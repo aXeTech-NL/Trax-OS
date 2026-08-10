@@ -297,6 +297,10 @@ V1 offline data includes:
 
 Local-only mode encrypts its database, stores keys in OS secure storage, performs no app-managed automatic or implicit Trax Cloud backup (and opts out of OS cloud backup where supported) and requires explicit canonical JSON export for recovery, with generated PDF/XLSX reports for human use. Losing the only device and exports may be unrecoverable.
 
+Connected sync through Trax Cloud or a compatible self-hosted endpoint supports incremental offline reconciliation for at most 90 consecutive days after the last successful authoritative sync. Incremental local-first sync is not supported beyond that interval. A connected replica that is offline for more than 90 days must reconnect, preserve still-authorised pending commands for review/export, reset its sync replica and complete a full resync before connected sync resumes. Pending changes are never silently uploaded or discarded during that reset; commands for a revoked scope are explicitly denied and securely purged instead.
+
+This 90-day clock does not apply to a workspace explicitly created and kept as standalone local-only authority, because no backend replica is involved. Simply going offline or removing an endpoint does not turn a formerly connected replica into local-only authority.
+
 Connecting Local to a sync workspace supports full-workspace or selective journey import. Non-conflicting records merge. Every actual conflict shows a preview and requires `Use device`, `Use cloud` or an explicit reviewed merge; neither side wins silently.
 
 UI terminology must reflect actual capability:

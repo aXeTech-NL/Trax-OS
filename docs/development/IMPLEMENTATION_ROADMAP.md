@@ -257,7 +257,12 @@ Offline is a V1 capability delivered incrementally across all phases, not a mark
 - pending/syncing/applied/conflict/failed states;
 - selected PowerSync adapter with canonical command upload/reconciliation;
 - conflict and optimistic reconciliation;
-- revocation purge.
+- revocation purge;
+- a server-time `P90D` graveyard/retention watermark for connected replicas;
+- quarantine plus online replica reset/full resync when authoritative elapsed time is greater than `P90D` or a checkpoint is older than the retained graveyard floor;
+- encrypted/access-controlled quarantine, revocation-safe denial/purge, explicit export and bounded retention/secure deletion;
+- boundary acceptance at exactly and beyond `P90D`, including delayed reconnect, UUID reuse and pending-command review;
+- an explicit standalone local-only exemption that cannot be entered by merely removing endpoint configuration.
 
 ### Device file cache
 

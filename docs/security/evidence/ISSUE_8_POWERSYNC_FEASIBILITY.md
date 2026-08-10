@@ -146,7 +146,7 @@ The production threat register remains correct at `not-implemented`/`designed` w
 
 1. Attach the commit-bound local run to an immutable review or CI evidence record and complete independent review of that immutable result.
 2. Repeat invalid-token and broader malformed-input abuse tests against the eventual selected production version; this slice covers only wrong audience, expiry and deterministic signature corruption.
-3. Complete M3b only after choosing graveyard versus replica epoch/reset: deterministic tombstone retention/purge, delayed reconnect and UUID reuse, queue/conflict bounds and backpressure.
+3. Implement and validate M3b against the selected hybrid policy: minimal graveyard retention through the server-time `P90D` connected-sync window, quarantine plus replica reset/full resync beyond the retained floor, delayed reconnect and UUID reuse, encrypted/revocation-safe bounded quarantine, and queue/conflict bounds with backpressure. Standalone local-only authority is exempt from the sync clock but remains gated by Issues #2/#9.
 4. Repeat after service restart and after image pulls with outbound network disabled.
 5. Validate supported Capacitor and Tauri routes separately; compilation is not runtime acceptance.
 6. Complete encryption/key-custody evidence under Issue #9.
