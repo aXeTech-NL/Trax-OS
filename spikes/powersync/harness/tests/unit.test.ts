@@ -13,9 +13,11 @@ import {
   assertCombinedOutstandingCapacity,
   assertOutstandingCapacity,
   assertPositiveExpectedRecordVersion,
+  assertPrivateRegularFile,
   isReplicaResetRequired,
   mergeFinalizedQuarantine,
   persistQuarantineAcknowledgement,
+  parseResetState,
   ReplicaResetRequiredError,
   quarantineEntryReservationBytes,
   readQuarantineStore,
@@ -23,6 +25,7 @@ import {
   spikeCapacityLimits,
   terminalResultSerializedBytes,
   transientAttemptDecision,
+  validateQuarantineResetLink,
   validateQueuedCrud,
   waitForInitialSync,
   writePrivateJsonAtomically,
@@ -56,7 +59,21 @@ function basic(principal: Principal, secret = credentials[principal]): string {
   return `Basic ${Buffer.from(`${principal}:${secret}`).toString("base64")}`;
 }
 
-test("token requests authenticate identity and reject identity/scope parameters", () => {
+test("empty durable quarantine sidecars remain resumable", () => {
+  assert.doesNotThrow(() => validateQuarantineResetLink(true,0,"quarantined"));
+  for (const phase of ["quarantined","session_staged","cleared"] as const) {
+    assert.throws(
+      () => validateQuarantineResetLink(false,0,phase),
+      /reset_state_missing_quarantine_sidecar/,
+    );
+  }
+  assert.throws(
+    () => validateQuarantineResetLink(true,1,undefined),
+    /pending_quarantine_requires_reset_state/,
+  );
+});
+
+test("token requests authenticate identity and reject identity\/scope parameters", () => {
   const accepted = parseTokenRequest(
     new URL("http://token/token"),
     basic("casey"),
@@ -501,6 +518,51 @@ test("R2 application sidecar migrates transactionally with conservative completi
   } finally {
     await rm(directory, { recursive:true, force:true });
   }
+});
+
+test("restart session selection binds client name, principal and credential", async () => {
+  const directory=await mkdtemp(path.join(os.tmpdir(),"trax-r4-session-"));
+  const filename=path.join(directory,"state.sqlite");
+  const session={replicaId:"11111111-1111-4111-8111-111111111111",replicaEpoch:3,
+    credential:`r2_${Buffer.alloc(32,2).toString("base64url")}`};
+  try {
+    const state=new ApplicationState(filename);state.setReplicaSession(session,2,"device-a",ids.users.eve);state.close();
+    await chmod(filename,0o600);
+    const reopened=new ApplicationState(filename);
+    assert.deepEqual(reopened.resumeReplicaSession("device-a",ids.users.eve),{session,resetCount:2});
+    assert.throws(()=>reopened.resumeReplicaSession("device-b",ids.users.eve),/resume_session_owner_mismatch/);
+    assert.throws(()=>reopened.resumeReplicaSession("device-a",ids.users.alice),/resume_session_owner_mismatch/);
+    reopened.close();
+  } finally { await rm(directory,{recursive:true,force:true}); }
+});
+
+test("restart sidecars require strict private mode and known reset phases", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(),"trax-r4-private-"));
+  try {
+    const target = path.join(directory,"state.json");
+    await writeFile(target,"{}\n",{ mode:0o600 });
+    assert.equal(await assertPrivateRegularFile(target),true);
+    await chmod(target,0o644);
+    await assert.rejects(assertPrivateRegularFile(target),/resume_sidecar_mode_invalid/);
+    assert.equal(await assertPrivateRegularFile(path.join(directory,"missing")),false);
+    const session = { replicaId:"11111111-1111-4111-8111-111111111111",replicaEpoch:2,
+      credential:`r2_${Buffer.alloc(32,1).toString("base64url")}` };
+    const requestId="22222222-2222-4222-8222-222222222222";
+    assert.equal(parseResetState({ version:2,phase:"session_staged",resetRequestId:requestId,
+      oldSession:{ ...session,replicaEpoch:1 },newSession:session }).phase,"session_staged");
+    assert.throws(() => parseResetState({ version:2,phase:"unknown",resetRequestId:requestId,
+      oldSession:session }),/invalid_reset_state/);
+    assert.throws(() => parseResetState({ version:2,phase:"cleared",resetRequestId:requestId,
+      oldSession:session }),/invalid_reset_state_phase/);
+    for (const malformed of [
+      "22222222-2222-2222-8222-222222222222",
+      "22222222-2222-4222-7222-222222222222",
+      "22222222-2222-4222-8222-22222222222-",
+      "22222222-2222-4222-8222-22222222222Z",
+      "22222222-2222-4222-A222-222222222222",
+    ]) assert.throws(() => parseResetState({ version:2,phase:"quarantined",resetRequestId:malformed,
+      oldSession:session }),/invalid_reset_state/);
+  } finally { await rm(directory,{ recursive:true,force:true }); }
 });
 
 test("private atomic sidecar failures remove payload-bearing temporary files", async () => {

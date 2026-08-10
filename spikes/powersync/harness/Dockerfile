@@ -3,7 +3,7 @@ FROM ${NODE_IMAGE}
 
 WORKDIR /spike
 COPY package.json package-lock.json ./
-RUN npx --yes npm@10.9.4 ci --ignore-scripts
+RUN npx --yes npm@10.9.4 ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY tests ./tests

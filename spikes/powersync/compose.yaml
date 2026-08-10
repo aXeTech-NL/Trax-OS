@@ -19,8 +19,8 @@ services:
       POSTGRES_DB: ${PS8_POSTGRES_DB}
       POSTGRES_USER: ${PS8_POSTGRES_USER}
       POSTGRES_PASSWORD: ${PS8_POSTGRES_PASSWORD}
-    ports:
-      - "127.0.0.1:${PS8_POSTGRES_PORT}:5432"
+    expose:
+      - "5432"
     volumes:
       - source-data:/var/lib/postgresql/data
       - ./postgres:/docker-entrypoint-initdb.d:ro
@@ -53,8 +53,8 @@ services:
       PS8_DATABASE_URL: postgres://${PS8_TOKEN_READER_USER}:${PS8_TOKEN_READER_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
       PS8_TOKEN_CREDENTIALS_JSON: ${PS8_TOKEN_CREDENTIALS_JSON:?per-run principal credentials are required}
       PS8_ENABLE_INVALID_TOKEN_FIXTURES: "1"
-    ports:
-      - "127.0.0.1:${PS8_TOKEN_PORT}:6060"
+    expose:
+      - "6060"
     depends_on:
       source-db:
         condition: service_healthy
@@ -93,8 +93,8 @@ services:
       PS8_JWKS_URL: http://token-server:6060/jwks
       PS8_POST_COMMIT_FAULT_SECRET: ${PS8_POST_COMMIT_FAULT_SECRET:?per-run fault secret is required}
       PS8_REPLICA_ROTATION_SECRET: ${PS8_REPLICA_ROTATION_SECRET:?distinct per-run replica rotation secret is required}
-    ports:
-      - "127.0.0.1:${PS8_COMMAND_PORT}:7070"
+    expose:
+      - "7070"
     depends_on:
       source-db:
         condition: service_healthy
@@ -130,8 +130,8 @@ services:
       PS_JWKS_URL: http://token-server:6060/jwks
     volumes:
       - ./config:/config:ro
-    ports:
-      - "127.0.0.1:${PS8_POWERSYNC_PORT}:8080"
+    expose:
+      - "8080"
     depends_on:
       source-db:
         condition: service_healthy
@@ -154,4 +154,5 @@ volumes:
 
 networks:
   default:
+    internal: true
     labels: *spike-labels

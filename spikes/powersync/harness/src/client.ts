@@ -1,4 +1,4 @@
-import { chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
   type AbstractPowerSyncDatabase,
@@ -47,7 +47,7 @@ export const spikeCapacityLimits = Object.freeze({
   maxSerializedOutstandingBytes: 65_536,
   maxTransientUploadAttempts: 5,
   terminalResultReservationBytes: 512,
-  applicationStateSchemaVersion: 2,
+  applicationStateSchemaVersion: 3,
 });
 
 interface TerminalResultRecord {
@@ -227,7 +227,8 @@ export class ApplicationState {
         );
         CREATE TABLE IF NOT EXISTS trax_app_replica_session (
           singleton INTEGER PRIMARY KEY CHECK (singleton = 1), replica_id TEXT NOT NULL,
-          replica_epoch INTEGER NOT NULL, checkpoint_state TEXT NOT NULL, reset_count INTEGER NOT NULL
+          replica_epoch INTEGER NOT NULL, checkpoint_state TEXT NOT NULL, reset_count INTEGER NOT NULL,
+          credential TEXT, client_name TEXT, principal_id TEXT
         );
       `);
       const columns = (table: string): Set<string> => new Set(
@@ -249,6 +250,16 @@ export class ApplicationState {
       );
       if (!overlayColumns.has("actual_serialized_bytes")) this.sqlite.exec(
         "ALTER TABLE trax_app_optimistic_resources ADD COLUMN actual_serialized_bytes INTEGER NOT NULL DEFAULT 1 CHECK (actual_serialized_bytes > 0)",
+      );
+      const sessionColumns = columns("trax_app_replica_session");
+      if (!sessionColumns.has("credential")) this.sqlite.exec(
+        "ALTER TABLE trax_app_replica_session ADD COLUMN credential TEXT",
+      );
+      if (!sessionColumns.has("client_name")) this.sqlite.exec(
+        "ALTER TABLE trax_app_replica_session ADD COLUMN client_name TEXT",
+      );
+      if (!sessionColumns.has("principal_id")) this.sqlite.exec(
+        "ALTER TABLE trax_app_replica_session ADD COLUMN principal_id TEXT",
       );
       const legacyResults = this.sqlite.prepare(`SELECT id, resource_id, state, result_code, previous_version,
         current_version, digest, attempt_number, serialized_bytes FROM trax_app_command_results`).all() as Array<{
@@ -440,11 +451,29 @@ export class ApplicationState {
       Array<OptimisticResource & { serialized_bytes:number; actual_serialized_bytes:number }>;
   }
 
-  setReplicaSession(session:ReplicaSessionSecret, resetCount:number): void {
+  setReplicaSession(session:ReplicaSessionSecret, resetCount:number, clientName?:string, principalId?:string): void {
     this.sqlite.prepare(`INSERT INTO trax_app_replica_session
-      (singleton,replica_id,replica_epoch,checkpoint_state,reset_count) VALUES (1,?,?,'client_observed',?)
+      (singleton,replica_id,replica_epoch,checkpoint_state,reset_count,credential,client_name,principal_id)
+      VALUES (1,?,?,'client_observed',?,?,?,?)
       ON CONFLICT(singleton) DO UPDATE SET replica_id=excluded.replica_id,replica_epoch=excluded.replica_epoch,
-      checkpoint_state=excluded.checkpoint_state,reset_count=excluded.reset_count`).run(session.replicaId,session.replicaEpoch,resetCount);
+      checkpoint_state=excluded.checkpoint_state,reset_count=excluded.reset_count,credential=excluded.credential,
+      client_name=excluded.client_name,principal_id=excluded.principal_id`).run(
+        session.replicaId,session.replicaEpoch,resetCount,session.credential,clientName ?? null,principalId ?? null,
+      );
+  }
+
+  resumeReplicaSession(clientName:string, principalId:string): { session:ReplicaSessionSecret; resetCount:number } | undefined {
+    const row = this.sqlite.prepare(`SELECT replica_id,replica_epoch,credential,client_name,principal_id,reset_count
+      FROM trax_app_replica_session WHERE singleton=1`).get() as {
+        replica_id:string; replica_epoch:number; credential:string|null; client_name:string|null;
+        principal_id:string|null; reset_count:number;
+      } | undefined;
+    if (!row) return undefined;
+    if (row.client_name !== clientName || row.principal_id !== principalId || row.credential === null) {
+      throw new Error("resume_session_owner_mismatch");
+    }
+    return { session:parseReplicaSessionSecret({ replicaId:row.replica_id, replicaEpoch:Number(row.replica_epoch),
+      credential:row.credential }), resetCount:Number(row.reset_count) };
   }
 
   replicaSession(): ReplicaSessionView | undefined {
@@ -613,11 +642,69 @@ export async function writePrivateJsonAtomically(target: string, value: unknown,
   }
 }
 
+export async function assertPrivateRegularFile(target:string):Promise<boolean> {
+  try {
+    const info = await lstat(target);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("resume_sidecar_not_regular");
+    if ((info.mode & 0o777) !== 0o600) throw new Error("resume_sidecar_mode_invalid");
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export type ResetState = {
+  version:2; phase:"quarantined"|"session_staged"|"cleared"; resetRequestId:string;
+  oldSession:ReplicaSessionSecret; newSession?:ReplicaSessionSecret;
+};
+
+const canonicalV4Uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export function parseResetState(value:unknown):ResetState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_reset_state");
+  const record = value as Record<string,unknown>;
+  const allowed = new Set(["version","phase","resetRequestId","oldSession","newSession"]);
+  if (Object.keys(record).some((key) => !allowed.has(key)) || record.version !== 2 ||
+      !["quarantined","session_staged","cleared"].includes(String(record.phase)) ||
+      typeof record.resetRequestId !== "string" || !canonicalV4Uuid.test(record.resetRequestId)) {
+    throw new Error("invalid_reset_state");
+  }
+  const phase = record.phase as ResetState["phase"];
+  const oldSession = parseReplicaSessionSecret(record.oldSession);
+  const newSession = record.newSession === undefined ? undefined : parseReplicaSessionSecret(record.newSession);
+  if ((phase === "session_staged" || phase === "cleared") !== (newSession !== undefined)) {
+    throw new Error("invalid_reset_state_phase");
+  }
+  return { version:2, phase, resetRequestId:record.resetRequestId, oldSession, ...(newSession ? { newSession } : {}) };
+}
+
+async function readResetState(target:string):Promise<ResetState|undefined> {
+  if (!await assertPrivateRegularFile(target)) return undefined;
+  return parseResetState(JSON.parse(await readFile(target,"utf8")));
+}
+
 type QuarantineIntent = {
   id:string; command_type:string; resource_id:string; resource_incarnation_id:string;
   payload:string|null; expected_record_version:number; initiallyAuthorized:boolean; reserved_bytes:number;
 };
 type QuarantineStore = { version:2; finalized:QuarantinedCommand[]; pending:QuarantineIntent[] };
+
+export function validateQuarantineResetLink(
+  quarantineSidecarExisted:boolean,
+  pendingCount:number,
+  resetPhase:ResetState["phase"]|undefined,
+):void {
+  if (pendingCount > 0 && resetPhase === undefined) {
+    throw new Error("pending_quarantine_requires_reset_state");
+  }
+  // An empty pending set is a valid reset snapshot. Distinguish that durable
+  // empty sidecar from a missing quarantine sidecar after a partial/corrupt
+  // write sequence.
+  if (!quarantineSidecarExisted && pendingCount === 0 && resetPhase !== undefined) {
+    throw new Error("reset_state_missing_quarantine_sidecar");
+  }
+}
 
 function quarantineString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length < 1) throw new Error(`Invalid quarantine ${field}.`);
@@ -697,9 +784,9 @@ function assertUniqueQuarantineIds(store:QuarantineStore): void {
 }
 
 export async function readQuarantineStore(target: string): Promise<{ store:QuarantineStore; existed:boolean; migrated:boolean }> {
-  let value: unknown;
-  try { value = JSON.parse(await readFile(target, "utf8")); }
-  catch (error) {
+  let value:unknown;
+  try { value=JSON.parse(await readFile(target,"utf8")); }
+  catch(error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return { store:{ version:2, finalized:[], pending:[] }, existed:false, migrated:false };
     }
@@ -825,6 +912,7 @@ export interface QuarantinedCommand { id: string; resource_id: string; resource_
 export interface ReplicaSessionView { replicaId: string; replicaEpoch: number; checkpointState: string; resetCount: number }
 export interface ReplicaResetHooks {
   afterQuarantineWritten?: (sidecarPath: string) => Promise<void>;
+  afterResetStateWrittenBeforeApplicationSession?: (resetStatePath: string) => Promise<void>;
   afterSessionPersisted?: (resetStatePath: string) => Promise<void>;
   afterClear?: (resetStatePath: string) => Promise<void>;
   resetPostCommitDropSecret?: string;
@@ -852,6 +940,7 @@ export async function openSpikeClient(options: {
   name: string; runtimeDirectory: string; endpoint: string; token: string;
   commandEndpoint?: string; uploadFault?: UploadFaultOptions;
   forgedConnectionParams?: Record<string, string>; firstSyncTimeoutMs?: number;
+  resumeExisting?: boolean; principalId?: string;
 }): Promise<SpikeClient> {
   await mkdir(options.runtimeDirectory, { recursive: true });
   const filename = `${options.name}.db`; const fullFilename = path.join(options.runtimeDirectory, filename);
@@ -861,14 +950,20 @@ export async function openSpikeClient(options: {
   const quarantinePath = path.join(quarantineDirectory, `${options.name}.quarantine.json`);
   const resetStatePath = path.join(quarantineDirectory, `${options.name}.reset.json`);
   const applicationStatePath = path.join(quarantineDirectory, `${options.name}.application-state.sqlite`);
+  const applicationStateExisted = await assertPrivateRegularFile(applicationStatePath);
   const applicationState = new ApplicationState(applicationStatePath);
   await chmod(applicationStatePath, 0o600);
   let persistedQuarantine: Awaited<ReturnType<typeof readQuarantineStore>>;
+  let persistedReset:ResetState|undefined;
   try {
+    persistedReset = await readResetState(resetStatePath);
+    const quarantineSidecarExisted = await assertPrivateRegularFile(quarantinePath);
     persistedQuarantine = await readQuarantineStore(quarantinePath);
-    if (persistedQuarantine.store.pending.length > 0) {
-      throw new Error("Cross-process continuation of an unfinished replica reset is not supported by this spike.");
-    }
+    validateQuarantineResetLink(
+      quarantineSidecarExisted,
+      persistedQuarantine.store.pending.length,
+      persistedReset?.phase,
+    );
     if (persistedQuarantine.migrated) await writePrivateJsonAtomically(quarantinePath, persistedQuarantine.store);
     const quarantinedIds = new Set(persistedQuarantine.store.finalized.map((command) => command.id));
     if (applicationState.activeCommandIds().some((commandId) => quarantinedIds.has(commandId))) {
@@ -883,15 +978,97 @@ export async function openSpikeClient(options: {
     applicationState.close();
     throw error;
   }
+  if (options.resumeExisting && !await assertPrivateRegularFile(fullFilename)) {
+    applicationState.close();
+    throw new Error("resume_replica_missing");
+  }
   const commandEndpoint = options.commandEndpoint ?? "http://127.0.0.1:1";
   let resetCount = 0;
   let finalizedQuarantine: QuarantinedCommand[] = persistedQuarantine.store.finalized;
   let finalizedQuarantineReservedBytes = finalizedQuarantineBytes(finalizedQuarantine);
-  let session = options.commandEndpoint ? await registerReplica(commandEndpoint, options.token) : undefined;
-  let challenge = session ? await issueChallenge(commandEndpoint, options.token, session) : undefined;
+  let session:ReplicaSessionSecret|undefined;
+  const sessionMatches = (left:ReplicaSessionSecret, right:ReplicaSessionSecret):boolean =>
+    left.replicaId === right.replicaId && left.replicaEpoch === right.replicaEpoch && left.credential === right.credential;
+  if (options.resumeExisting) {
+    if (!applicationStateExisted || !options.commandEndpoint || !options.principalId) {
+      applicationState.close();
+      throw new Error("resume_requires_private_state_endpoint_and_principal");
+    }
+    const resumed = applicationState.resumeReplicaSession(options.name,options.principalId);
+    if (!resumed) { applicationState.close(); throw new Error("resume_session_missing"); }
+    session = resumed.session; resetCount = resumed.resetCount;
+  } else {
+    session = options.commandEndpoint ? await registerReplica(commandEndpoint, options.token) : undefined;
+  }
   const makeDatabase = () => new PowerSyncDatabase({ schema: spikeSchema, database: { dbFilename: filename, dbLocation: options.runtimeDirectory } });
   let database = makeDatabase();
   let databaseClosed = false;
+  let resumeResetNeedsFinalization = false;
+
+  // A resumed destructive reset is brought to the durable `cleared` phase
+  // before a challenge is issued or a connector/upload callback exists. This
+  // prevents stale queued CRUD from racing the recovery path.
+  if (options.resumeExisting && persistedReset) {
+    if (!session) { applicationState.close(); throw new Error("resume_session_missing"); }
+    let state = persistedReset;
+    const current = applicationState.resumeReplicaSession(options.name,options.principalId!);
+    if (!current) { applicationState.close(); throw new Error("resume_session_missing"); }
+    if (state.phase === "quarantined") {
+      if (!sessionMatches(current.session,state.oldSession)) {
+        applicationState.close(); throw new Error("resume_reset_session_mismatch");
+      }
+      const reset = await replicaPost<ReplicaSessionSecret>(commandEndpoint,options.token,"/spike/replicas/reset",{
+        replicaId:state.oldSession.replicaId,replicaEpoch:state.oldSession.replicaEpoch,resetRequestId:state.resetRequestId,
+      },state.oldSession);
+      if (reset.status !== 200) { applicationState.close(); throw new Error("Stale-only replica reset failed during resume."); }
+      const newSession=parseReplicaSessionSecret(reset.body);
+      state={...state,phase:"session_staged",newSession};
+      await writePrivateJsonAtomically(resetStatePath,state);
+      applicationState.setReplicaSession(newSession,current.resetCount+1,options.name,options.principalId);
+      session=newSession;resetCount=current.resetCount+1;
+    } else if (state.phase === "session_staged") {
+      const newSession=parseReplicaSessionSecret(state.newSession);
+      if (sessionMatches(current.session,state.oldSession)) {
+        // Exact supported crash window: reset JSON was durable but the
+        // application session transaction had not committed yet.
+        applicationState.setReplicaSession(newSession,current.resetCount+1,options.name,options.principalId);
+        session=newSession;resetCount=current.resetCount+1;
+      } else if (sessionMatches(current.session,newSession)) {
+        session=newSession;resetCount=current.resetCount;
+      } else {
+        applicationState.close(); throw new Error("resume_reset_session_mismatch");
+      }
+    } else {
+      const newSession=parseReplicaSessionSecret(state.newSession);
+      if (!sessionMatches(current.session,newSession)) {
+        applicationState.close(); throw new Error("resume_reset_session_mismatch");
+      }
+      session=newSession;resetCount=current.resetCount;
+    }
+    if (state.phase === "session_staged") {
+      const newSession=parseReplicaSessionSecret(state.newSession);
+      const acknowledgement=await replicaPost(commandEndpoint,options.token,"/spike/replicas/reset/ack",{
+        replicaId:newSession.replicaId,replicaEpoch:newSession.replicaEpoch,resetRequestId:state.resetRequestId,
+      },newSession);
+      if (acknowledgement.status !== 200) { applicationState.close(); throw new Error("Replica reset acknowledgement failed during resume."); }
+      const clearing=await readQuarantineStore(quarantinePath);
+      const resultUsage=applicationState.resultCapacityUsage();
+      assertCombinedOutstandingCapacity(resultUsage.count+clearing.store.finalized.length+clearing.store.pending.length,
+        resultUsage.bytes+finalizedQuarantineBytes(clearing.store.finalized)+clearing.store.pending.reduce((sum,item)=>sum+item.reserved_bytes,0));
+      await database.disconnectAndClear();
+      applicationState.clearOverlays();
+      await database.close();databaseClosed=true;
+      state={...state,phase:"cleared"};
+      await writePrivateJsonAtomically(resetStatePath,state);
+    } else if (state.phase === "cleared") {
+      await database.close();databaseClosed=true;
+    }
+    persistedReset=state;
+    resumeResetNeedsFinalization=true;
+  }
+
+  let challenge = session ? await issueChallenge(commandEndpoint, options.token, session) : undefined;
+  if (databaseClosed) { database=makeDatabase(); databaseClosed=false; }
   let connector = new SpikeCommandConnector(options.endpoint, options.token, commandEndpoint, session, applicationState, options.uploadFault);
   const connectAndObserve = async () => {
     databaseClosed = false;
@@ -899,11 +1076,42 @@ export async function openSpikeClient(options: {
     await waitForInitialSync(database, options.firstSyncTimeoutMs ?? 30_000);
     if (session && challenge) {
       await acknowledgeChallenge(commandEndpoint, options.token, session, challenge.challengeId);
-      applicationState.setReplicaSession(session, resetCount);
+      applicationState.setReplicaSession(session, resetCount, options.name, options.principalId);
     }
+    await chmod(fullFilename,0o600);
   };
-  try { await connectAndObserve(); }
-  catch (error) {
+  try {
+    await connectAndObserve();
+    if (resumeResetNeedsFinalization) {
+      if (!session || persistedReset?.phase !== "cleared") throw new Error("resume_reset_not_cleared_before_connect");
+      const retained=await readQuarantineStore(quarantinePath);
+      const additions:QuarantinedCommand[]=[];
+      for (const item of retained.store.pending) {
+        const current=await replicaPost<{preserve:boolean}>(commandEndpoint,options.token,"/spike/replicas/classify",{
+          replicaId:session.replicaId,replicaEpoch:session.replicaEpoch,resourceId:item.resource_id,
+          resourceIncarnationId:item.resource_incarnation_id,
+        },session);
+        const currentlyAuthorized=current.status===200&&"preserve" in current.body&&current.body.preserve===true;
+        const local=await database.getAll<{id:string}>("SELECT id FROM resources WHERE id = ? AND resource_incarnation_id = ? AND deleted_at IS NULL",
+          [item.resource_id,item.resource_incarnation_id]);
+        const visible=item.initiallyAuthorized===true&&currentlyAuthorized&&local.length===1;
+        const finalized:QuarantinedCommand={id:item.id,resource_id:item.resource_id,
+          resource_incarnation_id:item.resource_incarnation_id,command_type:item.command_type,
+          expected_record_version:item.expected_record_version,state:visible?"pending_review":"invalidated",
+          payload:visible?item.payload:null,exportable:visible?1:0,reserved_bytes:item.reserved_bytes};
+        if (Buffer.byteLength(JSON.stringify(finalized),"utf8")>item.reserved_bytes) throw new Error("quarantine_representation_reservation_exceeded");
+        additions.push(finalized);
+      }
+      const merged=mergeFinalizedQuarantine(retained.store.finalized,additions);
+      const completed:QuarantineStore={version:2,finalized:merged,pending:[]};
+      const resultUsage=applicationState.resultCapacityUsage();
+      assertCombinedOutstandingCapacity(resultUsage.count+merged.length,resultUsage.bytes+finalizedQuarantineBytes(merged));
+      await writePrivateJsonAtomically(quarantinePath,completed);
+      finalizedQuarantine=merged;finalizedQuarantineReservedBytes=finalizedQuarantineBytes(merged);
+      await unlink(resetStatePath);
+      persistedReset=undefined;resumeResetNeedsFinalization=false;
+    }
+  } catch (error) {
     try { await closeDatabase(database); applicationState.close(); }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], `Opening PowerSync client ${options.name} and cleanup both failed.`); }
     throw error;
@@ -1022,12 +1230,7 @@ export async function openSpikeClient(options: {
         );
         return finalizedBytes + pendingBytes;
       };
-      type ResetState = { version:2; phase:"quarantined"|"session_staged"|"cleared"; resetRequestId:string; oldSession:ReplicaSessionSecret; newSession?:ReplicaSessionSecret };
-      const readObject = async <T>(target: string): Promise<T | undefined> => {
-        try { return JSON.parse(await readFile(target, "utf8")) as T; }
-        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-      };
-      let state = await readObject<ResetState>(resetStatePath);
+      let state = await readResetState(resetStatePath);
       if (!state) {
         if (!connector.needsReset()) throw new Error("Replica reset was not requested by the server.");
         const batch = await database.getCrudBatch(1_000);
@@ -1097,6 +1300,8 @@ export async function openSpikeClient(options: {
         const stagedQuarantine = await readQuarantineStore(quarantinePath);
         assertResetCapacity(stagedQuarantine.store);
         await writePrivateJsonAtomically(resetStatePath, state);
+        await hooks.afterResetStateWrittenBeforeApplicationSession?.(resetStatePath);
+        applicationState.setReplicaSession(newSession,resetCount+1,options.name,options.principalId);
         await hooks.afterSessionPersisted?.(resetStatePath);
       }
       if (state.phase === "session_staged") {
@@ -1105,7 +1310,12 @@ export async function openSpikeClient(options: {
           replicaId:newSession.replicaId, replicaEpoch:newSession.replicaEpoch, resetRequestId:state.resetRequestId,
         }, newSession);
         if (acknowledgement.status !== 200) throw new Error("Replica reset acknowledgement failed.");
-        session = newSession; connector.setSession(newSession); resetCount += 1;
+        const stagedSession = applicationState.replicaSession();
+        const stagedCountAlreadyApplied = stagedSession?.replicaId === newSession.replicaId &&
+          stagedSession.replicaEpoch === newSession.replicaEpoch;
+        session = newSession; connector.setSession(newSession);
+        if (stagedCountAlreadyApplied) resetCount = stagedSession!.resetCount;
+        else resetCount += 1;
         const clearingQuarantine = await readQuarantineStore(quarantinePath);
         assertResetCapacity(clearingQuarantine.store);
         await database.disconnectAndClear();
@@ -1120,6 +1330,7 @@ export async function openSpikeClient(options: {
       }
       if (state.phase !== "cleared" || !state.newSession) throw new Error("Replica reset state did not reach cleared.");
       session = parseReplicaSessionSecret(state.newSession);
+      applicationState.setReplicaSession(session,resetCount,options.name,options.principalId);
       if (!databaseClosed) { await database.close(); databaseClosed = true; }
       challenge = await issueChallenge(commandEndpoint, options.token, session);
       database = makeDatabase(); connector = new SpikeCommandConnector(options.endpoint, options.token, commandEndpoint, session, applicationState, options.uploadFault);
@@ -1164,4 +1375,46 @@ export async function openSpikeClient(options: {
     },
   };
   return api;
+}
+
+export interface OfflineSpikeSnapshot {
+  resources:ReplicaResource[]; results:LocalCommandResult[]; quarantine:QuarantinedCommand[];
+  session:ReplicaSessionView; resetPhase:ResetState["phase"]|null;
+}
+
+/** Read a closed replica and application sidecars without creating a connector
+ * or issuing any network request. This is availability evidence only. */
+export async function readSpikeClientOffline(options:{
+  name:string; runtimeDirectory:string; principalId:string;
+}):Promise<OfflineSpikeSnapshot> {
+  const quarantineDirectory = path.join(path.dirname(options.runtimeDirectory),"quarantine");
+  const applicationStatePath = path.join(quarantineDirectory,`${options.name}.application-state.sqlite`);
+  const quarantinePath = path.join(quarantineDirectory,`${options.name}.quarantine.json`);
+  const resetStatePath = path.join(quarantineDirectory,`${options.name}.reset.json`);
+  const replicaPath = path.join(options.runtimeDirectory,`${options.name}.db`);
+  for (const target of [applicationStatePath,replicaPath,quarantinePath]) {
+    if (!await assertPrivateRegularFile(target)) throw new Error("offline_state_missing");
+  }
+  const app = new BetterSqlite3(applicationStatePath,{ readonly:true,fileMustExist:true });
+  const replica = new BetterSqlite3(replicaPath,{ readonly:true,fileMustExist:true });
+  try {
+    const sessionRow = app.prepare(`SELECT replica_id,replica_epoch,checkpoint_state,reset_count,
+      credential,client_name,principal_id FROM trax_app_replica_session WHERE singleton=1`).get() as {
+        replica_id:string;replica_epoch:number;checkpoint_state:string;reset_count:number;
+        credential:string|null;client_name:string|null;principal_id:string|null;
+      }|undefined;
+    if (!sessionRow || sessionRow.client_name !== options.name || sessionRow.principal_id !== options.principalId ||
+        sessionRow.credential === null) throw new Error("offline_session_owner_mismatch");
+    parseReplicaSessionSecret({ replicaId:sessionRow.replica_id,replicaEpoch:Number(sessionRow.replica_epoch),
+      credential:sessionRow.credential });
+    const quarantine = await readQuarantineStore(quarantinePath);
+    const reset = await readResetState(resetStatePath);
+    const resources = replica.prepare("SELECT id,payload FROM resources WHERE deleted_at IS NULL ORDER BY id").all() as ReplicaResource[];
+    const results = app.prepare(`SELECT id,resource_id,state,result_code,previous_version,current_version,
+      attempt_number FROM trax_app_command_results ORDER BY id`).all() as LocalCommandResult[];
+    return { resources,results,quarantine:quarantine.store.finalized,
+      session:{ replicaId:sessionRow.replica_id,replicaEpoch:Number(sessionRow.replica_epoch),
+        checkpointState:sessionRow.checkpoint_state,resetCount:Number(sessionRow.reset_count) },
+      resetPhase:reset?.phase ?? null };
+  } finally { replica.close(); app.close(); }
 }
