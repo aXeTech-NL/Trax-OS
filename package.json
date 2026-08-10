@@ -15,13 +15,15 @@
     "contract:check": "node scripts/contracts.mjs check && node --test scripts/contracts.test.mjs scripts/contract-compatibility.test.mjs",
     "contract:compat": "node scripts/contract-compatibility.mjs",
     "architecture:check": "node scripts/architecture-decisions.mjs",
+    "boundaries:check": "node --test scripts/module-boundaries.test.mjs && node scripts/module-boundaries.mjs",
     "security:check": "node --test scripts/check-threat-model.test.mjs && node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json",
     "security:closure": "node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json --closure"
   },
   "devDependencies": {
     "api-smart-diff": "1.0.6",
     "concurrently": "9.1.2",
-    "openapi-typescript": "7.8.0"
+    "openapi-typescript": "7.8.0",
+    "typescript": "5.8.3"
   },
   "engines": {
     "node": ">=22 <23",

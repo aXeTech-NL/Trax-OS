@@ -71,6 +71,8 @@ packages/
 └── ui/                  shared design-system implementation
 ```
 
+The tree above is the **target V1 map**, not a list of currently implemented packages. The machine-enforced [module and package boundary registry](MODULE_AND_PACKAGE_BOUNDARIES.md) currently activates only `apps/api`, `apps/web` and `packages/api-contract`. Every other concrete named target path is an inactive, non-required reservation until its owning issue and activation gates pass. `packages/model-provider-*` is only an unallocated naming family: each concrete provider path requires a reviewed registry entry before creation and is not claimed as a wildcard reservation.
+
 Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. TypeScript adapters retain explicit untrusted-JSON checks and wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
 
 ## 4. Backend module boundaries

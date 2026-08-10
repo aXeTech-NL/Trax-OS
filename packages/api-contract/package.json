@@ -9,7 +9,8 @@
     ".": {
       "types": "./generated/schema.ts"
     },
-    "./openapi.json": "./generated/openapi.json"
+    "./openapi.json": "./generated/openapi.json",
+    "./runtime-fixtures.json": "./generated/runtime-fixtures.json"
   },
   "files": [
     "generated"

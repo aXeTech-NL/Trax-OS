@@ -2,7 +2,7 @@ COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE = docker compose --env-file "$(COMPOSE_ENV_FILE)"
 UV_RUN = uv run --env-file "$(COMPOSE_ENV_FILE)" --project apps/api
 
-.PHONY: bootstrap generate contract-check contract-compat architecture-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check contract-compat architecture-check boundaries-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -21,13 +21,16 @@ contract-compat:
 architecture-check:
 	npm run architecture:check
 
+boundaries-check:
+	npm run boundaries:check
+
 threat-model-check:
 	npm run security:check
 
 api-check:
-	$(UV_RUN) ruff format --check apps/api scripts/compose_smoke.py
-	$(UV_RUN) ruff check apps/api scripts/compose_smoke.py
-	$(UV_RUN) mypy apps/api/src apps/api/tests scripts/compose_smoke.py
+	$(UV_RUN) ruff format --check apps/api scripts/compose_smoke.py scripts/python-imports.py
+	$(UV_RUN) ruff check apps/api scripts/compose_smoke.py scripts/python-imports.py
+	$(UV_RUN) mypy apps/api/src apps/api/tests scripts/compose_smoke.py scripts/python-imports.py
 
 web-check:
 	npm run check --workspace @trax-os/web
@@ -36,7 +39,7 @@ test:
 	$(UV_RUN) pytest apps/api/tests
 	npm run test --workspace @trax-os/web
 
-check: contract-check architecture-check threat-model-check api-check web-check test
+check: contract-check architecture-check boundaries-check threat-model-check api-check web-check test
 
 dev:
 	$(UV_RUN) npm run dev

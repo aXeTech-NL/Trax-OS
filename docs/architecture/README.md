@@ -11,6 +11,7 @@ Trax OS is an agentic, offline-first travel operating system with a shared comma
 - [Atlas Model Provider Architecture](ATLAS_PROVIDER_MODEL.md) — local, bring-your-own OpenAI-compatible and managed-credit provider modes, credential handling and egress security.
 - [V1 Agent-assisted Web Research](AGENT_RESEARCH_V1.md) — browsing-capable agent research, MCP candidate submission, source verification and deferred commercial APIs.
 - [Implementation Architecture](IMPLEMENTATION_ARCHITECTURE.md) — modular monolith, React/FastAPI boundaries, PowerSync integration, Unit of Work, contracts, routing, migrations and fitness checks.
+- [Module and Package Boundaries](MODULE_AND_PACKAGE_BOUNDARIES.md) — machine-enforced active roots, current TypeScript/Python import DAGs and explicitly inactive target paths.
 - [ADR-002: HTTP contract authority](decisions/ADR-002-CONTRACT-AUTHORITY.md) — Pydantic/FastAPI authored authority, generated OpenAPI/TypeScript ownership and compatibility policy.
 - [Target Domain Model](DOMAIN_MODEL.md) — consolidated ownership, journey, planning, operations, document, provider, change and sync model.
 - [Retention and Deletion](RETENTION_AND_DELETION.md) — V1 retention, cancellation/export and purge defaults.

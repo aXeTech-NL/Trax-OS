@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import runtimeFixtures from "../../../../packages/api-contract/generated/runtime-fixtures.json";
+import runtimeFixtures from "@trax-os/api-contract/runtime-fixtures.json";
 import {
   HttpInstanceRepository,
   InstanceRepositoryError,
