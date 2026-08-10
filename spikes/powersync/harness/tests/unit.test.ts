@@ -38,6 +38,7 @@ import {
 } from "../src/command-protocol.js";
 import {
   validateEvidenceEntry,
+  validateM3bR5Observation,
   writeEvidenceEntry,
   type EvidenceEntry,
 } from "../src/evidence.js";
@@ -662,6 +663,83 @@ test("bounded polling rejects a read that exceeds the hard deadline", async () =
       10,
     ),
     /timed out/,
+  );
+});
+
+test("R5 evidence remains an exact sanitized limitation rather than acceptance", () => {
+  const limitation = {
+    status: "executed-uncommitted",
+    verdict: "limitation-demonstrated",
+    checkpointProof: "client-observed-not-server-attested",
+    rawReplicaClient: "http-only-no-powersync-or-sqlite",
+    falseAckRenewedEligibility: true,
+    unchangedOldIntentApplied: true,
+    authorizationIndependent: true,
+    conflictIndependent: true,
+    incarnationIndependent: true,
+    missingTargetIndependent: true,
+    idempotencyIndependent: true,
+    resetAckWithoutClearAccepted: true,
+    oldEpochRejected: true,
+    unseenIntentReboundAcrossEpoch: true,
+    createCommands: { validated: false },
+    technicalRecommendation: "do-not-use-checkpoint-ack-as-authority",
+    riskAcceptance: "pending-human-decision",
+    architectureGate: "blocked-pending-alternative-or-policy-revision",
+    codes: {
+      staleBeforeFalseAck: "replica_reset_required",
+      unchangedOldIntent: "applied",
+      authorization: "command_denied",
+      conflict: "optimistic_conflict",
+      incarnation: "stale_incarnation",
+      missingTarget: "command_denied",
+      idempotency: "idempotency_conflict",
+      oldEpoch: "invalid_replica",
+      reboundIntent: "applied",
+    },
+    resourceMutationCounts: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 0,
+      conflict: 0,
+      incarnation: 0,
+      missingTarget: 0,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    eventDeltas: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 0,
+      conflict: 0,
+      incarnation: 0,
+      missingTarget: 0,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    receiptDeltas: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 1,
+      conflict: 1,
+      incarnation: 1,
+      missingTarget: 1,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    sanitized: true,
+  };
+  assert.doesNotThrow(() => validateM3bR5Observation(limitation));
+  assert.throws(
+    () => validateM3bR5Observation({ ...limitation, riskAcceptance: "accepted" }),
+    /exact negative-capability semantics/,
+  );
+  assert.throws(
+    () => validateM3bR5Observation({ ...limitation, replicaId: "12345678-1234-4234-8234-123456789abc" }),
+    /exact negative-capability semantics/,
   );
 });
 

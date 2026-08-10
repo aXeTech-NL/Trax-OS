@@ -1,5 +1,6 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 export const evidenceStates = [
   "designed",
@@ -44,6 +45,79 @@ export interface EvidenceEntry {
   observations?: Record<string, unknown>;
 }
 
+export function validateM3bR5Observation(value: unknown): void {
+  const expected = {
+    status: "executed-uncommitted",
+    verdict: "limitation-demonstrated",
+    checkpointProof: "client-observed-not-server-attested",
+    rawReplicaClient: "http-only-no-powersync-or-sqlite",
+    falseAckRenewedEligibility: true,
+    unchangedOldIntentApplied: true,
+    authorizationIndependent: true,
+    conflictIndependent: true,
+    incarnationIndependent: true,
+    missingTargetIndependent: true,
+    idempotencyIndependent: true,
+    resetAckWithoutClearAccepted: true,
+    oldEpochRejected: true,
+    unseenIntentReboundAcrossEpoch: true,
+    createCommands: { validated: false },
+    technicalRecommendation: "do-not-use-checkpoint-ack-as-authority",
+    riskAcceptance: "pending-human-decision",
+    architectureGate: "blocked-pending-alternative-or-policy-revision",
+    codes: {
+      staleBeforeFalseAck: "replica_reset_required",
+      unchangedOldIntent: "applied",
+      authorization: "command_denied",
+      conflict: "optimistic_conflict",
+      incarnation: "stale_incarnation",
+      missingTarget: "command_denied",
+      idempotency: "idempotency_conflict",
+      oldEpoch: "invalid_replica",
+      reboundIntent: "applied",
+    },
+    resourceMutationCounts: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 0,
+      conflict: 0,
+      incarnation: 0,
+      missingTarget: 0,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    eventDeltas: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 0,
+      conflict: 0,
+      incarnation: 0,
+      missingTarget: 0,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    receiptDeltas: {
+      staleBeforeFalseAck: 0,
+      unchangedOldIntent: 1,
+      authorization: 1,
+      conflict: 1,
+      incarnation: 1,
+      missingTarget: 1,
+      idempotencyReplay: 0,
+      oldEpoch: 0,
+      reboundIntent: 1,
+    },
+    sanitized: true,
+  };
+  if (!isDeepStrictEqual(value, expected)) {
+    throw new Error(
+      "experimentalM3bR5 must retain the exact negative-capability semantics without identifiers or sensitive data.",
+    );
+  }
+}
+
 export function validateEvidenceEntry(entry: EvidenceEntry): EvidenceEntry {
   if (!entry.check.trim() || !entry.details.trim()) {
     throw new Error("Evidence check and details are required.");
@@ -76,6 +150,9 @@ export function validateEvidenceEntry(entry: EvidenceEntry): EvidenceEntry {
   }
   if (entry.state === "failed" && entry.exitCode === 0) {
     throw new Error("Failed evidence requires a non-zero exit code.");
+  }
+  if (entry.observations && "experimentalM3bR5" in entry.observations) {
+    validateM3bR5Observation(entry.observations.experimentalM3bR5);
   }
   if (entry.state === "executed-uncommitted") {
     if (

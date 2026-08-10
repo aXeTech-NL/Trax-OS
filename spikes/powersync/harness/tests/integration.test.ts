@@ -11,6 +11,7 @@ import {
   type ReplicaResource,
 } from "../src/assertions.js";
 import { openSpikeClient, spikeCapacityLimits, type SpikeClient } from "../src/client.js";
+import { commandDigest, type ReplicaBinding, type SpikeCommand } from "../src/command-protocol.js";
 import {
   expectedCaseyAfterAlphaRevocation,
   expectedResources,
@@ -657,6 +658,32 @@ function commandBody(command: { commandId: string; type: string; resourceId: str
   const resourceIncarnationId = command.resourceIncarnationId ?? resourceIncarnations[command.resourceId];
   if (!resourceIncarnationId) throw new Error("Integration command requires a known resource incarnation.");
   return { spikeProtocol: 1, ...(session ? { replicaId:session.replicaId, replicaEpoch:session.replicaEpoch } : {}), localTransactionId: randomUUID(), commands: [{ ...command, resourceIncarnationId }] };
+}
+
+function singleCommandResult(response: { status:number; body:Record<string,unknown> }): Record<string,unknown> {
+  const results=response.body.results;
+  assert.ok(Array.isArray(results) && results.length === 1, `expected one command result, received ${JSON.stringify(response.body)}`);
+  return results[0] as Record<string,unknown>;
+}
+
+function exactNormalizedDenialBody(
+  response:{status:number;body:Record<string,unknown>},
+  command:SpikeCommand,
+  binding:ReplicaBinding,
+):Record<string,unknown> {
+  assert.deepEqual(Object.keys(response.body).sort(),["results","spikeProtocol"]);
+  assert.equal(response.body.spikeProtocol,1);
+  const result=singleCommandResult(response);
+  assert.deepEqual(Object.keys(result).sort(),[
+    "attemptNumber","code","commandId","currentVersion","digest","previousVersion","resourceId","state",
+  ]);
+  assert.equal(result.commandId,command.commandId);
+  assert.equal(result.resourceId,command.resourceId);
+  assert.equal(result.digest,commandDigest(command,binding));
+  return {
+    status:response.status,
+    body:{...response.body,results:[{...result,commandId:"<request-command-id>",resourceId:"<request-resource-id>",digest:"<request-digest>"}]},
+  };
 }
 
 async function waitForResult(client: SpikeClient, commandId: string) {
@@ -1941,11 +1968,187 @@ test(
       for (const { command } of concurrencyCommands.slice(0, 4)) await testControl(`barriers/${command.commandId}/release`, "POST");
       assert.deepEqual((await Promise.all(heldRequests)).map((result) => result.status), [200, 200, 200, 200]);
       assert.equal((await commandRequest(tokens.casey, commandBody(fifth.command, fifth.replica))).status, 200);
-      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count), graveyardBeforeR3);
+      const graveyardAfterR3=Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count);
+      assert.equal(graveyardAfterR3, graveyardBeforeR3);
       assert.deepEqual(
         (await pool.query("SELECT resource_incarnation_id,final_version FROM ps8_resource_graveyard WHERE resource_id=$1", [r3RetainedTombstone.id])).rows[0],
         { resource_incarnation_id: r3RetainedTombstone.incarnation, final_version: "2" },
       );
+
+      // R5a deliberately uses one raw HTTP-only replica. That replica is never
+      // passed to openSpikeClient and never owns PowerSync/SQLite state. The
+      // scenario characterizes the missing attestation; it is not a workaround.
+      const r5Resources = {
+        unchanged: { id:randomUUID(),incarnation:randomUUID() },
+        rebound: { id:randomUUID(),incarnation:randomUUID() },
+        authorization: { id:randomUUID(),incarnation:randomUUID() },
+        conflict: { id:randomUUID(),incarnation:randomUUID() },
+        reused: { id:randomUUID(),oldIncarnation:randomUUID(),newIncarnation:randomUUID() },
+        purged: { id:randomUUID(),incarnation:randomUUID() },
+      };
+      await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2", [ids.users.eve,ids.parties.charlie]);
+      for (const resource of [r5Resources.unchanged,r5Resources.rebound]) {
+        await pool.query(`INSERT INTO resources(id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+          VALUES($1,$2,$3,$4,'journey',NULL,'R5_HTTP_ONLY',1)`,
+        [resource.id,resource.incarnation,ids.workspaces.two,ids.journeys.two]);
+      }
+      await pool.query(`INSERT INTO resources(id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+        VALUES($1,$2,$3,$4,'party',$5,'R5_AUTHORIZATION',1)`,
+      [r5Resources.authorization.id,r5Resources.authorization.incarnation,ids.workspaces.two,ids.journeys.two,ids.parties.charlie]);
+      await pool.query(`INSERT INTO resources(id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+        VALUES($1,$2,$3,$4,'journey',NULL,'R5_CONFLICT_CURRENT',2)`,
+      [r5Resources.conflict.id,r5Resources.conflict.incarnation,ids.workspaces.two,ids.journeys.two]);
+      for (const resource of [
+        { id:r5Resources.reused.id,incarnation:r5Resources.reused.oldIncarnation },
+        r5Resources.purged,
+      ]) {
+        await pool.query(`INSERT INTO resources(id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+          VALUES($1,$2,$3,$4,'journey',NULL,'R5_EXPIRING',1)`,
+        [resource.id,resource.incarnation,ids.workspaces.two,ids.journeys.two]);
+        await pool.query("UPDATE resources SET deleted_at=ps8_now(),version=2 WHERE id=$1",[resource.id]);
+      }
+      await pool.query("UPDATE ps8_resource_graveyard SET deleted_at=ps8_now()-interval '120 days 1 microsecond' WHERE resource_id=ANY($1::uuid[])",
+        [[r5Resources.reused.id,r5Resources.purged.id]]);
+      assert.equal((await maintenance()).markersPurged,2);
+      await pool.query(`INSERT INTO resources(id,resource_incarnation_id,workspace_id,journey_id,audience,party_id,payload,version)
+        VALUES($1,$2,$3,$4,'journey',NULL,'R5_REUSED_CURRENT',3)`,
+      [r5Resources.reused.id,r5Resources.reused.newIncarnation,ids.workspaces.two,ids.journeys.two]);
+
+      const rawReplica=await registerTestReplica(tokens.eve);
+      replicaCredentialById.set(rawReplica.replicaId,rawReplica.credential);
+      await challengeAndAck(tokens.eve,rawReplica);
+      const unchangedOldIntent={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.unchanged.id,resourceIncarnationId:r5Resources.unchanged.incarnation,
+        expectedRecordVersion:1,payload:"R5_UNCHANGED_OLD_INTENT"};
+      const resourceInvariant=async(resourceId:string) => (await pool.query(
+        `SELECT id,resource_incarnation_id,payload,version::text,deleted_at::text
+           FROM resources WHERE id=$1 ORDER BY id`,[resourceId])).rows;
+      const commandEffects=async(commandId:string) => (await pool.query(
+        `SELECT
+           (SELECT count(*)::int FROM ps8_command_receipts WHERE command_id=$1) AS receipts,
+           (SELECT count(*)::int FROM ps8_command_change_events WHERE command_id=$1) AS events`,[commandId])).rows[0] as {receipts:number;events:number};
+      const unchangedBefore=await resourceInvariant(r5Resources.unchanged.id);
+      assert.deepEqual(unchangedBefore,[{id:r5Resources.unchanged.id,
+        resource_incarnation_id:r5Resources.unchanged.incarnation,payload:"R5_HTTP_ONLY",version:"1",deleted_at:null}]);
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1)+interval '90 days 1 microsecond')",
+        [rawReplica.replicaId]);
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required(last_client_observed_ack_at,acknowledged_sequence) AS required FROM ps8_replicas WHERE replica_id=$1",
+        [rawReplica.replicaId])).rows[0].required,true);
+      const staleBeforeFalseAck=await commandRequest(tokens.eve,commandBody(unchangedOldIntent,rawReplica));
+      assert.deepEqual(staleBeforeFalseAck,{status:428,body:{error:"replica_reset_required"}});
+      assert.deepEqual(await resourceInvariant(r5Resources.unchanged.id),unchangedBefore);
+      assert.deepEqual(await commandEffects(unchangedOldIntent.commandId),{receipts:0,events:0});
+      await challengeAndAck(tokens.eve,rawReplica);
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required(last_client_observed_ack_at,acknowledged_sequence) AS required FROM ps8_replicas WHERE replica_id=$1",
+        [rawReplica.replicaId])).rows[0].required,false);
+      const unchangedApplied=await commandRequest(tokens.eve,commandBody(unchangedOldIntent,rawReplica));
+      assert.deepEqual({status:unchangedApplied.status,code:singleCommandResult(unchangedApplied).code},{status:200,code:"applied"});
+      assert.deepEqual(await resourceInvariant(r5Resources.unchanged.id),[{id:r5Resources.unchanged.id,
+        resource_incarnation_id:r5Resources.unchanged.incarnation,payload:unchangedOldIntent.payload,version:"2",deleted_at:null}]);
+      assert.deepEqual(await commandEffects(unchangedOldIntent.commandId),{receipts:1,events:1});
+
+      const authorizationCommand={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.authorization.id,resourceIncarnationId:r5Resources.authorization.incarnation,
+        expectedRecordVersion:1,payload:"R5_AUTHORIZATION_MUST_NOT_APPLY"};
+      const authorizationBefore=await resourceInvariant(r5Resources.authorization.id);
+      await pool.query("UPDATE party_memberships SET active=false WHERE user_id=$1 AND party_id=$2",[ids.users.eve,ids.parties.charlie]);
+      const authorizationDenied=await commandRequest(tokens.eve,commandBody(authorizationCommand,rawReplica));
+      assert.deepEqual({status:authorizationDenied.status,code:singleCommandResult(authorizationDenied).code},{status:403,code:"command_denied"});
+      assert.deepEqual(await resourceInvariant(r5Resources.authorization.id),authorizationBefore);
+      assert.deepEqual(await commandEffects(authorizationCommand.commandId),{receipts:1,events:0});
+      await pool.query("UPDATE party_memberships SET active=true WHERE user_id=$1 AND party_id=$2",[ids.users.eve,ids.parties.charlie]);
+
+      const conflictCommand={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.conflict.id,resourceIncarnationId:r5Resources.conflict.incarnation,
+        expectedRecordVersion:1,payload:"R5_CONFLICT_MUST_NOT_APPLY"};
+      const conflictBefore=await resourceInvariant(r5Resources.conflict.id);
+      const conflictResult=await commandRequest(tokens.eve,commandBody(conflictCommand,rawReplica));
+      assert.deepEqual({status:conflictResult.status,code:singleCommandResult(conflictResult).code},{status:200,code:"optimistic_conflict"});
+      assert.deepEqual(await resourceInvariant(r5Resources.conflict.id),conflictBefore);
+      assert.deepEqual(await commandEffects(conflictCommand.commandId),{receipts:1,events:0});
+
+      const incarnationCommand={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.reused.id,resourceIncarnationId:r5Resources.reused.oldIncarnation,
+        expectedRecordVersion:3,payload:"R5_STALE_INCARNATION_MUST_NOT_APPLY"};
+      const incarnationBefore=await resourceInvariant(r5Resources.reused.id);
+      const incarnationResult=await commandRequest(tokens.eve,commandBody(incarnationCommand,rawReplica));
+      assert.deepEqual({status:incarnationResult.status,code:singleCommandResult(incarnationResult).code},{status:200,code:"stale_incarnation"});
+      assert.deepEqual(await resourceInvariant(r5Resources.reused.id),incarnationBefore);
+      assert.deepEqual(await commandEffects(incarnationCommand.commandId),{receipts:1,events:0});
+
+      const missingCommand={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.purged.id,resourceIncarnationId:r5Resources.purged.incarnation,
+        expectedRecordVersion:1,payload:"R5_PURGED_MUST_NOT_APPLY"};
+      const missingBefore=await resourceInvariant(r5Resources.purged.id);
+      assert.deepEqual(missingBefore,[]);
+      const missingDenied=await commandRequest(tokens.eve,commandBody(missingCommand,rawReplica));
+      assert.deepEqual(
+        exactNormalizedDenialBody(missingDenied,missingCommand,rawReplica),
+        exactNormalizedDenialBody(authorizationDenied,authorizationCommand,rawReplica),
+        "existing-but-revoked and purged targets must retain exactly the same response-body shape after verified request-derived fields are normalized",
+      );
+      assert.deepEqual(await resourceInvariant(r5Resources.purged.id),missingBefore);
+      assert.deepEqual(await commandEffects(missingCommand.commandId),{receipts:1,events:0});
+
+      const replayResourceBefore=await resourceInvariant(r5Resources.unchanged.id);
+      const replayEffectsBefore=await commandEffects(unchangedOldIntent.commandId);
+      assert.deepEqual(replayEffectsBefore,{receipts:1,events:1});
+      const changedReplay=await commandRequest(tokens.eve,commandBody({...unchangedOldIntent,payload:"R5_CHANGED_REPLAY"},rawReplica));
+      assert.deepEqual(changedReplay,{status:409,body:{error:"idempotency_conflict"}});
+      assert.deepEqual(await resourceInvariant(r5Resources.unchanged.id),replayResourceBefore);
+      assert.deepEqual(await commandEffects(unchangedOldIntent.commandId),replayEffectsBefore);
+
+      const unseenPreResetIntent={commandId:randomUUID(),type:"ps8.resource.update.v1" as const,
+        resourceId:r5Resources.rebound.id,resourceIncarnationId:r5Resources.rebound.incarnation,
+        expectedRecordVersion:1,payload:"R5_REBOUND_AFTER_RAW_RESET"};
+      const reboundBefore=await resourceInvariant(r5Resources.rebound.id);
+      assert.deepEqual(reboundBefore,[{id:r5Resources.rebound.id,
+        resource_incarnation_id:r5Resources.rebound.incarnation,payload:"R5_HTTP_ONLY",version:"1",deleted_at:null}]);
+      await pool.query("SELECT ps8_test_set_time((SELECT last_client_observed_ack_at FROM ps8_replicas WHERE replica_id=$1)+interval '90 days 1 microsecond')",
+        [rawReplica.replicaId]);
+      assert.equal((await pool.query("SELECT ps8_replica_reset_required(last_client_observed_ack_at,acknowledged_sequence) AS required FROM ps8_replicas WHERE replica_id=$1",
+        [rawReplica.replicaId])).rows[0].required,true);
+      const rawResetRequestId=randomUUID();
+      const rawReset=await replicaRequest(tokens.eve,"reset",{replicaId:rawReplica.replicaId,replicaEpoch:rawReplica.replicaEpoch,resetRequestId:rawResetRequestId},rawReplica);
+      assert.equal(rawReset.status,200);
+      const rotatedRawReplica=rawReset.body as unknown as TestReplicaSession;
+      assert.deepEqual({replicaId:rotatedRawReplica.replicaId,replicaEpoch:rotatedRawReplica.replicaEpoch},
+        {replicaId:rawReplica.replicaId,replicaEpoch:2});
+      assert.equal((await replicaRequest(tokens.eve,"reset/ack",{replicaId:rotatedRawReplica.replicaId,
+        replicaEpoch:rotatedRawReplica.replicaEpoch,resetRequestId:rawResetRequestId},rotatedRawReplica)).status,200);
+      await challengeAndAck(tokens.eve,rotatedRawReplica);
+      const oldEpochProbe={...unseenPreResetIntent,commandId:randomUUID()};
+      const oldEpochResponse=await commandRequest(tokens.eve,commandBody(oldEpochProbe,rawReplica),
+        {"x-ps8-replica-credential":rawReplica.credential});
+      assert.deepEqual(oldEpochResponse,{status:403,body:{error:"invalid_replica"}});
+      assert.deepEqual(await resourceInvariant(r5Resources.rebound.id),reboundBefore);
+      assert.deepEqual(await commandEffects(oldEpochProbe.commandId),{receipts:0,events:0});
+      replicaCredentialById.set(rotatedRawReplica.replicaId,rotatedRawReplica.credential);
+      const reboundResult=await commandRequest(tokens.eve,commandBody(unseenPreResetIntent,rotatedRawReplica));
+      assert.deepEqual({status:reboundResult.status,code:singleCommandResult(reboundResult).code},{status:200,code:"applied"});
+      assert.deepEqual(await resourceInvariant(r5Resources.rebound.id),[{id:r5Resources.rebound.id,
+        resource_incarnation_id:r5Resources.rebound.incarnation,payload:unseenPreResetIntent.payload,version:"2",deleted_at:null}]);
+      assert.deepEqual(await commandEffects(unseenPreResetIntent.commandId),{receipts:1,events:1});
+
+      const r5Observation = {
+        status:"executed-uncommitted",verdict:"limitation-demonstrated",
+        checkpointProof:"client-observed-not-server-attested",rawReplicaClient:"http-only-no-powersync-or-sqlite",
+        falseAckRenewedEligibility:true,unchangedOldIntentApplied:true,authorizationIndependent:true,
+        conflictIndependent:true,incarnationIndependent:true,missingTargetIndependent:true,idempotencyIndependent:true,
+        resetAckWithoutClearAccepted:true,oldEpochRejected:true,unseenIntentReboundAcrossEpoch:true,
+        createCommands:{validated:false},technicalRecommendation:"do-not-use-checkpoint-ack-as-authority",
+        riskAcceptance:"pending-human-decision",architectureGate:"blocked-pending-alternative-or-policy-revision",
+        codes:{staleBeforeFalseAck:"replica_reset_required",unchangedOldIntent:"applied",authorization:"command_denied",
+          conflict:"optimistic_conflict",incarnation:"stale_incarnation",missingTarget:"command_denied",
+          idempotency:"idempotency_conflict",oldEpoch:"invalid_replica",reboundIntent:"applied"},
+        resourceMutationCounts:{staleBeforeFalseAck:0,unchangedOldIntent:1,authorization:0,conflict:0,
+          incarnation:0,missingTarget:0,idempotencyReplay:0,oldEpoch:0,reboundIntent:1},
+        eventDeltas:{staleBeforeFalseAck:0,unchangedOldIntent:1,authorization:0,conflict:0,
+          incarnation:0,missingTarget:0,idempotencyReplay:0,oldEpoch:0,reboundIntent:1},
+        receiptDeltas:{staleBeforeFalseAck:0,unchangedOldIntent:1,authorization:1,conflict:1,
+          incarnation:1,missingTarget:1,idempotencyReplay:0,oldEpoch:0,reboundIntent:1},
+        sanitized:true,
+      };
 
       const beforeLimit = Number((await pool.query("SELECT count(*) AS count FROM ps8_replicas WHERE user_id=$1", [ids.users.alice])).rows[0].count);
       assert.ok(beforeLimit <= 16);
@@ -2110,7 +2313,7 @@ test(
           rateWindowRowsPerReplica: 1,
           tombstonesPreserved: true,
           graveyardMarkersBefore: graveyardBeforeR3,
-          graveyardMarkersAfter: Number((await pool.query("SELECT count(*) AS count FROM ps8_resource_graveyard")).rows[0].count),
+          graveyardMarkersAfter: graveyardAfterR3,
           automaticallyEvictedResults: 0,
           automaticallyRequeuedQuarantineCommands: 0,
         },
@@ -2122,10 +2325,16 @@ test(
         ],
         sanitized: true,
       } }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      const withR3 = JSON.parse(await readFile(target, "utf8")) as Record<string, unknown>;
+      await writeFile(target, `${JSON.stringify({ ...withR3, experimentalM3bR5:r5Observation }, null, 2)}\n`,
+        { encoding:"utf8",mode:0o600 });
       const retainedObservation = await readFile(target, "utf8");
       assert.ok(!/r2_[A-Za-z0-9_-]{43}/.test(retainedObservation));
       assert.ok(!retainedObservation.includes("R3_BOUNDED"));
       assert.ok(!retainedObservation.includes("R3_RATE"));
+      assert.ok(!retainedObservation.includes("R5_HTTP_ONLY"));
+      assert.ok(!retainedObservation.includes("R5_UNCHANGED_OLD_INTENT"));
+      assert.ok(!retainedObservation.includes(rawReplica.replicaId));
     } finally {
       await closeAllAndPool(clients, pool);
     }
