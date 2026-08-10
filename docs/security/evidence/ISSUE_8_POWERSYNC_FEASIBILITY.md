@@ -1,8 +1,8 @@
 # Issue #8 PowerSync Feasibility Evidence
 
-**Evidence status:** commit-bound M2, M3a and M3b-R1/R2/R3/R4 executions succeeded locally; complete Issue #8 validation is not claimed
+**Evidence status:** commit-bound M2, M3a and M3b-R1/R2/R3/R4/R5a executions succeeded locally; complete Issue #8 validation is not claimed
 
-**Scope:** commit-bound authenticated scope/revocation, experimental reconciliation, retention, honest-client reset, bounded-capacity, cross-process restart and cached/offline-read observations; native and server-attestation gates remain separate
+**Scope:** commit-bound authenticated scope/revocation, experimental reconciliation, retention, honest-client reset, bounded-capacity, cross-process restart, cached/offline-read and adversarial checkpoint-characterization observations; native and owner/security decision gates remain separate
 
 **Production impact:** none; isolated sibling spike with synthetic data
 
@@ -217,6 +217,31 @@ The sanitized observations recorded:
 
 This is bounded restart feasibility, not a production operations or durability certification. It does not validate node or volume loss, crash consistency under physical power loss, HA/multi-node operation, total host-egress isolation, upgrades/rollback, encrypted/native storage or hostile-client/server-attested PowerSync checkpoint completion. The process-local semaphore intentionally restarts empty. Plaintext mode-protected sidecars and the separate SDK/application transactions remain experimental.
 
+### 3.6 M3b-R5a commit-bound adversarial checkpoint characterization
+
+The following later run exercised clean candidate commit `b314ead79cb530ac8ebabf5d31e0096b7b7e552f`. Its ignored local record remains `executed-uncommitted`; the verdict is `limitation-demonstrated`, not attestation or risk acceptance:
+
+```text
+run ID: 1fb0f8db-3938-413e-bb3a-8e97cdb5f68b
+Compose project: trax-ps8-maurice-1fb0f8db-3938-413e-bb3a-8e97cdb5f68b
+Linux x86_64; Node.js v22.23.2; pinned npm 10.9.4
+Docker client/server 29.7.2; Docker Compose 5.4.0
+wrapper exit: 0; unit tests: 24/24; integration subtests: 2/2; R4 phases and cleanup: succeeded
+source digest: 26e320a138699743e2d81f82e1a0c8188a6e72f571a62bb8cb488c9ffaa582b6
+```
+
+A raw registered replica used authenticated HTTP only and never opened PowerSync or SQLite. The sanitized negative-capability observations recorded:
+
+- an upload at `P90D` plus one microsecond first received HTTP 428 `replica_reset_required`;
+- immediate issue/ack of a client-observed checkpoint challenge without sync changed the reset predicate to false, after which an unchanged, still-authorised old update applied;
+- current authorisation, expected version, immutable incarnation, missing-target denial and prior server-observed command digest/idempotency each remained independently authoritative with exact full-resource and receipt/event effects;
+- raw reset acknowledgement rotated the epoch without local clear/full sync and retired the old credential, but a never-server-observed pre-reset intent could be re-enveloped under epoch 2 and apply when current checks matched;
+- the missing and existing-but-revoked denial bodies had exact equal structure after only independently verified request-derived command/resource/digest fields were normalised;
+- no create command exists in the spike protocol, so create identity, uniqueness and resurrection behavior were not tested;
+- retained R5 evidence contains exact codes/counts/booleans only, keeps `riskAcceptance: pending-human-decision` and marks the architecture gate `blocked-pending-alternative-or-policy-revision`.
+
+The technical conclusion is **do not use checkpoint acknowledgement as authority**. Server controls prevent several stale or unauthorised outcomes, but they do not enforce the canonical hostile-client `P90D` boundary for unchanged authorised state, prove local wipe, or prevent unseen intent rebinding. The separate [checkpoint-attestation decision packet](ISSUE_8_POWERSYNC_CHECKPOINT_RISK.md) records alternatives and pending approvals; it records no owner/security/legal acceptance.
+
 ## 4. Implemented spike boundaries
 
 - Token issuance uses per-principal, per-run credentials and a dedicated database read role limited to `users(id, active)`.
@@ -229,6 +254,7 @@ This is bounded restart feasibility, not a production operations or durability c
 - R2 uses public SDK reset/full-sync methods and an application-owned private SQLite/JSON sidecar for results, overlays, replica session and quarantine; it contains no SQL against PowerSync internal tables. Server receipts make interruption retries terminal and idempotent, but the SDK queue and application sidecar are separate transactions and do not define a production client seam.
 - R3 adds explicit feasibility backpressure across client state, transient retries, server concurrency and per-replica request windows. It preserves orphan intent and prior quarantine through reset, requires explicit acknowledgement to release capacity and migrates R2 sidecars conservatively; the chosen numbers are not production sizing.
 - R4 resumes strict private replica/reset state before attaching a connector, proves the exact staged-session crash boundary across fresh processes and restarts all four services over the retained source volume. Its offline reader is network-less/read-only, while cached startup uses offline npm plus no-pull/no-build Compose on an internal container network; this is not total host isolation or physical-power-loss evidence.
+- R5a proves the checkpoint/reset acknowledgement gap with a raw HTTP-only replica: a false checkpoint restores incremental eligibility and a reset ack cannot prove clear. Current authorisation/version/incarnation/idempotency checks remain separate, but the canonical trusted-checkpoint gate is not met; R5b remains a human architecture/security decision.
 - `sync_grants` is rebuilt transactionally by PostgreSQL triggers from current user, workspace, Journey and party rows. The stream requires every active flag. This explicit projection belongs only to the disposable harness and is **not** a proposed production policy table.
 - The host integration controller still uses a known synthetic PostgreSQL superuser over a loopback-only published port to perform revocation fixtures. This is acceptable only for disposable local synthetic evidence and is not a production credential pattern.
 - First-sync timeout rejects, `currentStatus.hasSynced` is required, every partial client is closed on failure, reads/HTTP/queries have hard deadlines, and test cleanup failures propagate.
@@ -236,14 +262,14 @@ This is bounded restart feasibility, not a production operations or durability c
 
 ## 5. Threat and mitigation traceability
 
-| Threat/control                 | Evidence from this slice                                                                                                                                                                       | State                  | Missing evidence                                                                                                                         |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `TH-SYNC-001` / `MIT-SYNC-001` | authenticated synthetic identities; exact cross-workspace/second-Journey/party SQLite assertions; forged identity/scope and invalid JWT fixtures rejected                                      | `executed-uncommitted` | TLS, encrypted local storage, native credentials and compromised-service behavior are `not-validated`                                    |
-| `TH-SYNC-002` / `MIT-SYNC-002` | explicit active hierarchy projection, narrow publication/replication grants, immutable rules config                                                                                            | `executed-uncommitted` | production RLS equivalence, rule administration, production schema and privileged-role review are `not-validated`                        |
-| `TH-SYNC-003` / `MIT-SYNC-003` | synthetic singleton upload, incarnation/digest-bound applied/conflict/denied receipts, current-grant/retention serialization, idempotency retry and terminal queue outcomes                    | `executed-uncommitted` | production canonical command/UoW/policy equivalence, audited conflict UX and immutable evidence remain `not-validated`                   |
-| `TH-SYNC-004` / `MIT-SYNC-004` | strict endpoint-time retention plus per-replica age/floor gating, recoverable honest-client reset/full sync, cross-process pre-connect recovery and revocation/incarnation-filtered quarantine | `executed-uncommitted` | server-attested checkpoint, permanently offline/hostile device, node/volume loss and encrypted/forensic/key deletion are `not-validated` |
-| `TH-SYNC-005` / `MIT-SYNC-005` | digest-pinned local self-host stack, exact FSL evidence, four-service retained-volume restart and cached no-pull/no-build startup on an internal container network                             | `executed-uncommitted` | license acceptance, total host-egress isolation, upgrade/rollback, physical-power-loss/HA and operational hardening are `not-validated`  |
-| `TH-SYNC-006` / `MIT-SYNC-006` | bounded client state/bytes/retries, 16 replicas/user, one challenge/epoch, four command slots, DB-accounted 64 requests/replica/minute and exact plus-one backpressure without tombstone loss  | `executed-uncommitted` | production sizing, multi-node/distributed fairness and sustained native-scale storms remain `not-validated`                              |
+| Threat/control                 | Evidence from this slice                                                                                                                                                                                     | State                  | Missing evidence                                                                                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TH-SYNC-001` / `MIT-SYNC-001` | authenticated synthetic identities; exact cross-workspace/second-Journey/party SQLite assertions; forged identity/scope and invalid JWT fixtures rejected                                                    | `executed-uncommitted` | TLS, encrypted local storage, native credentials and compromised-service behavior are `not-validated`                                                                                  |
+| `TH-SYNC-002` / `MIT-SYNC-002` | explicit active hierarchy projection, narrow publication/replication grants, immutable rules config                                                                                                          | `executed-uncommitted` | production RLS equivalence, rule administration, production schema and privileged-role review are `not-validated`                                                                      |
+| `TH-SYNC-003` / `MIT-SYNC-003` | synthetic singleton upload, incarnation/digest-bound applied/conflict/denied receipts, current-grant/retention serialization, idempotency retry and terminal queue outcomes                                  | `executed-uncommitted` | production canonical command/UoW/policy equivalence, audited conflict UX and immutable evidence remain `not-validated`                                                                 |
+| `TH-SYNC-004` / `MIT-SYNC-004` | strict endpoint-time retention, honest-client reset/full sync, cross-process pre-connect recovery, revocation/incarnation-filtered quarantine and adversarial proof that client ack/reset is not attestation | `executed-uncommitted` | backend-verifiable alternative or approved policy revision, permanently offline/hostile-device acceptance, node/volume loss and encrypted/forensic/key deletion remain `not-validated` |
+| `TH-SYNC-005` / `MIT-SYNC-005` | digest-pinned local self-host stack, exact FSL evidence, four-service retained-volume restart and cached no-pull/no-build startup on an internal container network                                           | `executed-uncommitted` | license acceptance, total host-egress isolation, upgrade/rollback, physical-power-loss/HA and operational hardening are `not-validated`                                                |
+| `TH-SYNC-006` / `MIT-SYNC-006` | bounded client state/bytes/retries, 16 replicas/user, one challenge/epoch, four command slots, DB-accounted 64 requests/replica/minute and exact plus-one backpressure without tombstone loss                | `executed-uncommitted` | production sizing, multi-node/distributed fairness and sustained native-scale storms remain `not-validated`                                                                            |
 
 The production threat register remains correct at `not-implemented`/`designed` with `EV-SYNC-PLANNED`.
 
@@ -262,7 +288,7 @@ The production threat register remains correct at `not-implemented`/`designed` w
 
 1. Attach the commit-bound local run to an immutable review or CI evidence record and complete independent review of that immutable result.
 2. Repeat invalid-token and broader malformed-input abuse tests against the eventual selected production version; this slice covers only wrong audience, expiry and deterministic signature corruption.
-3. Resolve the pinned stack's missing server-attested checkpoint through an explicit residual-risk decision or reviewed alternative. Production sizing/distributed enforcement and quarantine encryption remain gates under Issues #45/#9; standalone local-only authority remains separately gated by Issues #2/#9.
+3. Complete R5b using the [checkpoint-attestation decision packet](ISSUE_8_POWERSYNC_CHECKPOINT_RISK.md): select and validate a backend-verifiable alternative, reject the pinned selection, or explicitly revise the canonical policy with named owner/security residual-risk acceptance. Production sizing/distributed enforcement and quarantine encryption remain gates under Issues #45/#9; standalone local-only authority remains separately gated by Issues #2/#9.
 4. Promote the bounded restart/cached-startup mechanism into a reviewed production operations design; repeat upgrade/rollback, HA/node/volume-loss and physical-power-loss drills. The spike isolated container egress and used offline/no-pull/no-build inputs but did not enforce total host-egress isolation.
 5. Validate supported Capacitor and Tauri routes separately; compilation is not runtime acceptance.
 6. Complete encryption/key-custody evidence under Issue #9.
