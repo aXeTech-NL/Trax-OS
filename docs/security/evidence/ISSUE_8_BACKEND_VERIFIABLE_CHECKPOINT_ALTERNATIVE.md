@@ -1,12 +1,12 @@
 # Issue #8 backend-verifiable checkpoint alternative assessment
 
-**Status:** bounded public-platform capability assessment negative for general Android and macOS; no concrete alternative approved
+**Status:** historical bounded public-platform capability assessment negative for general Android and macOS; its direction was superseded by ADR-018
 
 **Assessment date:** 2026-08-11
 
-**Owner direction:** preserve the canonical [`P90D` policy](../../architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary) and evaluate a backend-verifiable alternative
+**Assessed owner direction at that time:** preserve the then-canonical trusted-checkpoint interpretation and evaluate a backend-verifiable alternative
 
-**Decision effect:** Issue #45 remains blocked. This assessment is not a policy revision, residual-risk acceptance, sync-engine rejection, native support claim or production approval.
+**Later decision:** after this negative result, the owner accepted the narrower [ADR-018 connected-sync trust boundary](../../architecture/decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md). This assessment remains evidence for why lifecycle reports cannot be called local apply/clear attestation. It is not itself a policy revision, native support claim or production approval.
 
 ## Assessment inventory
 
@@ -161,10 +161,6 @@ As of this bounded assessment, **no implementation path for direction 1 was iden
 
 No software-only implementation spike is authorized by this result. Building one would demonstrate honest-client state-machine mechanics already bounded by R5a/R2-R4, not backend-verifiable durable apply or clear.
 
-R5b and Issue #45 remain blocked. The next owner decision must be one of:
+This assessment made none of the then-pending follow-up decisions. The owner subsequently selected policy revision in ADR-018 with named product-architecture residual-risk acceptance: exact `P90D` now governs server-recorded eligibility and the official-client lifecycle, not a hostile-client proof of durable local apply or clear.
 
-1. restrict connected-sync support to a future platform/environment that supplies a qualified storage-owning attestation primitive and then validate it on real hardware;
-2. reject connected-sync support for the intended general clients, with product/support migration, offline-mode consequences and replacement user-flow acceptance evidence; or
-3. explicitly revise the canonical policy and threat guarantee with named residual-risk acceptance.
-
-This document makes none of those follow-up decisions.
+That later choice resolves the missing owner decision, not production acceptance. Issue #45 still requires the ADR-018 state machine, independent command controls, create identity, native/operations evidence, independent security review and any selected adapter's legal approval. A future qualified storage-owning primitive may trigger re-evaluation, but it is not required by the revised general-client product guarantee.

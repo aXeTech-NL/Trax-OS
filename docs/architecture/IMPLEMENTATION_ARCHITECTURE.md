@@ -369,7 +369,7 @@ All online authoritative schema changes use explicit immutable Alembic revisions
 - Compare migrated schema and ORM mappings.
 - Use database foreign keys, checks, partial uniqueness and indexes for durable invariants.
 - Do not build a previous-MVP importer: V1 starts from a clean database because no production data is retained.
-- Retain minimal sync graveyard metadata and reject stale incremental reconciliation according to the canonical [`P90D` connected-sync reset boundary](RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary).
+- Retain minimal sync graveyard metadata and reject stale incremental reconciliation using endpoint-owned eligibility time/epoch and the retained floor according to the canonical [`P90D` connected-sync reset boundary](RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary) and [ADR-018](decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md). Client lifecycle telemetry never replaces canonical command or policy checks.
 
 PostgreSQL row-level security is defence in depth for workspace/party isolation. Application policies remain authoritative for field, purpose and relationship rules.
 

@@ -287,6 +287,8 @@ cancelled
 
 Sync must be idempotent by `command_id`. Conflicts are explicit outcomes, not silent last-write-wins behaviour.
 
+Connected sync follows [ADR-018](decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md): the endpoint owns replica epoch, retained-floor and exact `P90D` eligibility, while the official client's apply/reset/full-sync report is untrusted lifecycle telemetry. Every uploaded command still passes current canonical authorisation, version, incarnation and idempotency checks. Revocation denies future server access; Trax OS does not claim hostile-client local apply, clear or remote wipe.
+
 ## 9. Atlas as the official MCP client
 
 Atlas has no hidden database or backend access.

@@ -394,8 +394,8 @@ Syncable records use UUIDs, versions, timestamps and tombstones. The client main
 ```text
 local command queue
 selective workspace/journey dataset
-server-issued sync checkpoint and retention watermark
-replica generation/epoch
+server-recorded eligibility checkpoint and retention watermark
+replica lifecycle state and generation/epoch
 conflict records and stale-command quarantine
 local encrypted document inventory
 revocation tombstones
@@ -405,7 +405,7 @@ Provider snapshots may be server-wins or append-only. Agent research candidates 
 
 V1 supports offline reads/writes, encrypted local data, a durable command queue, device file cache and transfers. PowerSync is the V1 replication/local-SQLite adapter; canonical command upload and server policy remain authoritative regardless of adapter.
 
-Connected replicas follow the [`P90D` retention and reset boundary](RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary). A checkpoint at exactly `P90D` remains eligible for incremental reconciliation; after that boundary, or when its checkpoint predates the endpoint's graveyard floor, the client places still-authorised pending commands in encrypted, access-controlled quarantine, resets the replica and completes a full resync. Quarantined commands require explicit review and current authorisation/version/conflict validation before reapplication. Commands for revoked scopes are terminally denied and securely purged instead. Endpoint time is authoritative.
+Connected replicas follow the [`P90D` retention and reset boundary](RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary) and [ADR-018](decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md). A server-recorded eligibility checkpoint at exactly `P90D` remains eligible for incremental reconciliation; after that boundary, or when its target predates the endpoint's graveyard floor, normal renewal closes for that epoch. The official client places still-authorised pending commands in encrypted, access-controlled quarantine, rotates/resets the replica and completes a full resync. Quarantined commands require explicit review and current authorisation/version/incarnation/conflict validation before reapplication. Commands for revoked scopes are terminally denied and securely purged instead. Endpoint time and eligibility are server-owned; the client's completion report is honest-client lifecycle telemetry, not local-apply, clear or remote-wipe attestation.
 
 An explicitly standalone local-only workspace has no sync-offline clock. Going offline or removing an endpoint never converts a connected replica into standalone local authority.
 
