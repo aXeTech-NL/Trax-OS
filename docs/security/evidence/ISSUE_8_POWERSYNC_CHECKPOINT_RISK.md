@@ -1,8 +1,10 @@
 # Issue #8 PowerSync checkpoint-attestation decision packet
 
-**Status:** technical limitation demonstrated; owner selected a backend-verifiable alternative direction, with concrete design and independent security validation pending
+**Status:** technical limitation demonstrated; owner-selected direction has a negative bounded public-platform assessment for general Android/macOS
 
 **Owner direction:** on 2026-08-11 the repository CODEOWNER (`@Maurice-aXeTech`) selected the backend-verifiable checkpoint alternative. The canonical `P90D` policy remains unchanged and no residual risk is accepted by this selection.
+
+**Platform assessment:** the [backend-verifiable alternative assessment](ISSUE_8_BACKEND_VERIFIABLE_CHECKPOINT_ALTERNATIVE.md) identified no implementation path in the reviewed public general Android/macOS APIs that atomically binds protected replica storage transitions to attested receipts. A simulated or ordinary signed-receipt spike is not closure evidence.
 
 **Production decision:** blocked — this document records no concrete alternative acceptance, security acceptance, architecture implementation, legal acceptance or production approval
 
@@ -10,9 +12,9 @@
 
 The connected-sync policy requires a trusted checkpoint before a replica remains incrementally eligible across the [`P90D` boundary](../../architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary). The pinned PowerSync 1.23.3 service and Node SDK expose client-observed sync completion, but no application-backend-verifiable proof that a particular client durably applied a checkpoint or cleared its local database.
 
-The owner selected the first direction: preserve the current policy and pursue a backend-verifiable alternative. The production adapter in Issue #45 therefore remains blocked until a concrete alternative is specified and proves that the backend independently binds replica identity to a durable applied watermark. Replay, copied-client, failure-recovery and reset/clear semantics require independent security review and production acceptance evidence.
+The owner selected the first direction: preserve the current policy and pursue a backend-verifiable alternative. The platform assessment found that PowerSync, ordinary signatures, hardware-backed generic keys, Android app/device integrity and macOS Secure Enclave/device posture do not bind a receipt to a durable SQLite transition. No qualifying storage-owning trusted component was identified in the reviewed public general-client APIs.
 
-This direction does not approve PowerSync checkpoint acknowledgement as authority, select a concrete alternative, accept residual risk or imply production approval.
+The production adapter in Issue #45 remains blocked. This direction does not approve PowerSync checkpoint acknowledgement as authority, select a concrete implementation, accept residual risk or imply production approval.
 
 ## 2. Commit-bound negative-capability evidence
 
@@ -63,11 +65,11 @@ Remote wipe cannot be proven. Server-side authorisation still protects current a
 
 ## 5. Options for the owner/security decision
 
-| Option                                                                   | Required evidence                                                                                                                                                             | Consequence                                                                                   |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Backend-verifiable checkpoint alternative — owner-selected direction** | The backend independently binds replica identity to a durable applied watermark; replay, copied-client and failure-recovery tests pass                                        | Can preserve the current policy if a concrete design and its proof are independently reviewed |
-| Policy revision with compensating controls                               | Explicit hostile-client model, longer or indefinite protective history, current-authority/version/incarnation/idempotency controls, production sizing and operations evidence | Accepts that checkpoint/clear remain unverified and changes the canonical guarantee           |
-| Reject the pinned sync selection                                         | Alternative adapter evaluation with equivalent isolation, revocation, retention, offline and licensing evidence                                                               | Avoids accepting an unsupported checkpoint claim                                              |
+| Option                                                                                      | Required evidence                                                                                                                                                             | Consequence                                                                                                                  |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Backend-verifiable checkpoint alternative — owner-selected, bounded assessment negative** | The backend independently binds replica identity to a durable applied watermark; replay, copied-client and failure-recovery tests pass                                        | Could preserve the policy, but no qualifying path was identified in reviewed public general Android/macOS APIs               |
+| Policy revision with compensating controls                                                  | Explicit hostile-client model, longer or indefinite protective history, current-authority/version/incarnation/idempotency controls, production sizing and operations evidence | Accepts that checkpoint/clear remain unverified and changes the canonical guarantee                                          |
+| Reject connected-sync support for the intended general clients                              | Product/support migration, offline-mode consequences and replacement user-flow acceptance                                                                                     | Avoids claiming an unsupported trusted checkpoint; changing only the sync engine does not remove the endpoint trust boundary |
 
 Server epoch expiry or honest-client reset alone is not a fourth attestation option and does not satisfy the current canonical gate.
 
@@ -75,12 +77,12 @@ Server epoch expiry or honest-client reset alone is not a fourth attestation opt
 
 **Technical recommendation:** do not use the PowerSync client checkpoint acknowledgement as authority. Keep every command decision independent of it, do not claim hostile-client `P90D` enforcement or verified wipe, and do not promote create support before Issue #14 defines server-authoritative creation and identity allocation.
 
-| Decision                              | State                                                                  |
-| ------------------------------------- | ---------------------------------------------------------------------- |
-| Technical limitation characterization | Implemented in the disposable Issue #8 harness                         |
-| Architecture direction                | Owner selected backend-verifiable alternative; concrete design pending |
-| Security residual-risk acceptance     | Pending independent security authority                                 |
-| PowerSync FSL-1.1-ALv2 acceptance     | Pending owner/legal review                                             |
-| Production adapter approval           | Blocked                                                                |
+| Decision                              | State                                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Technical limitation characterization | Implemented in the disposable Issue #8 harness                                                                           |
+| Architecture direction                | Backend-verifiable alternative selected; bounded general-client platform assessment negative and owner follow-up pending |
+| Security residual-risk acceptance     | Pending independent security authority                                                                                   |
+| PowerSync FSL-1.1-ALv2 acceptance     | Pending owner/legal review                                                                                               |
+| Production adapter approval           | Blocked                                                                                                                  |
 
-The owner-direction part of R5b is recorded, but R5b completes only when the concrete alternative, canonical-document change if any, independent security authority, immutable review reference and production acceptance evidence are recorded. Until then Issue #8 remains conditionally feasible for its bounded server-side mechanics, while Issue #45 and complete sync acceptance remain blocked.
+The owner-direction part of R5b is recorded, but its first platform-capability assessment is negative. R5b completes only after an owner follow-up selects a viable qualified environment, rejects the connected-sync direction or explicitly revises policy, with the corresponding independent security authority, immutable review and production acceptance evidence. Until then Issue #8 remains conditionally feasible only for its bounded server-side mechanics, while Issue #45 and complete sync acceptance remain blocked.
