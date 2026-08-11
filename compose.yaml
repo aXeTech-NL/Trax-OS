@@ -5,7 +5,7 @@ x-api-build: &api-build
   dockerfile: apps/api/Dockerfile
 
 x-api-environment: &api-environment
-  TRAX_DATABASE_URL: ${TRAX_COMPOSE_DATABASE_URL:-postgresql+asyncpg://trax:trax-development-only@database:5432/trax}
+  TRAX_DATABASE_URL: ${TRAX_COMPOSE_DATABASE_URL:-postgresql+asyncpg://trax_app:trax-application-development-only@database:5432/trax}
   TRAX_SESSION_COOKIE_SECURE: ${TRAX_SESSION_COOKIE_SECURE:-false}
   TRAX_SESSION_TTL_SECONDS: ${TRAX_SESSION_TTL_SECONDS:-2592000}
 
@@ -26,12 +26,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-trax}
-      POSTGRES_USER: ${POSTGRES_USER:-trax}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trax-development-only}
+      POSTGRES_USER: ${POSTGRES_USER:-trax_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trax-admin-development-only}
+      TRAX_RUNTIME_DB_USER: ${TRAX_RUNTIME_DB_USER:-trax_app}
+      TRAX_RUNTIME_DB_PASSWORD: ${TRAX_RUNTIME_DB_PASSWORD:-trax-application-development-only}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./apps/api/postgres/00-runtime-role.sh:/docker-entrypoint-initdb.d/00-runtime-role.sh:ro
+      - ./apps/api/postgres/upgrade-development-roles.sh:/opt/trax/upgrade-development-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -43,7 +47,9 @@ services:
     <<: *restricted-service
     build: *api-build
     restart: "no"
-    environment: *api-environment
+    environment:
+      <<: *api-environment
+      TRAX_MIGRATION_DATABASE_URL: ${TRAX_COMPOSE_MIGRATION_DATABASE_URL:-postgresql+asyncpg://trax_admin:trax-admin-development-only@database:5432/trax}
     command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
     depends_on:
       database:
@@ -85,10 +91,7 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "wget -q -O /dev/null http://127.0.0.1:8080/health/ready",
-        ]
+        ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/ready"]
       interval: 5s
       timeout: 5s
       retries: 12

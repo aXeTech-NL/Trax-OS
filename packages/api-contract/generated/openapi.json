@@ -47,6 +47,33 @@
         "title": "Capability",
         "type": "object"
       },
+      "CommandEntityVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "const": "journey",
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "record_version": {
+            "minimum": 1.0,
+            "title": "Record Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_type",
+          "entity_id",
+          "record_version"
+        ],
+        "title": "CommandEntityVersion",
+        "type": "object"
+      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -288,6 +315,147 @@
           "status"
         ],
         "title": "JourneyUpdate",
+        "type": "object"
+      },
+      "JourneyUpdateCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "command_type": {
+            "const": "journey.update",
+            "title": "Command Type",
+            "type": "string"
+          },
+          "command_version": {
+            "minimum": 1.0,
+            "title": "Command Version",
+            "type": "integer"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JourneyUpdateCommandPayload"
+          }
+        },
+        "required": [
+          "command_id",
+          "command_type",
+          "command_version",
+          "payload"
+        ],
+        "title": "JourneyUpdateCommand",
+        "type": "object"
+      },
+      "JourneyUpdateCommandPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "end_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "expected_record_version": {
+            "minimum": 1.0,
+            "title": "Expected Record Version",
+            "type": "integer"
+          },
+          "journey_id": {
+            "format": "uuid",
+            "title": "Journey Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "status": {
+            "enum": [
+              "planning",
+              "active",
+              "completed",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_record_version",
+          "status",
+          "journey_id"
+        ],
+        "title": "JourneyUpdateCommandPayload",
+        "type": "object"
+      },
+      "JourneyUpdateCommandResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "change_set_id": {
+            "format": "uuid",
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "command_type": {
+            "const": "journey.update",
+            "title": "Command Type",
+            "type": "string"
+          },
+          "command_version": {
+            "title": "Command Version",
+            "type": "integer"
+          },
+          "outcome": {
+            "const": "applied",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CommandEntityVersion"
+          }
+        },
+        "required": [
+          "command_id",
+          "command_type",
+          "command_version",
+          "outcome",
+          "replayed",
+          "change_set_id",
+          "result"
+        ],
+        "title": "JourneyUpdateCommandResponse",
         "type": "object"
       },
       "LiveResponse": {
@@ -1797,6 +1965,166 @@
         "tags": [
           "instance"
         ]
+      }
+    },
+    "/api/v1/commands/journey.update": {
+      "post": {
+        "operationId": "canonical_update_journey_api_v1_commands_journey_update_post",
+        "parameters": [
+          {
+            "description": "Double-submit token matching the trax_csrf cookie.",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JourneyUpdateCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyUpdateCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or credentials invalid",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated request is not permitted or CSRF check failed",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Version or uniqueness conflict",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Canonical Update Journey"
       }
     },
     "/api/v1/journeys": {

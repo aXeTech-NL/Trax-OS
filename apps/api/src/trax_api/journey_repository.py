@@ -1,6 +1,7 @@
 """Server-authoritative Journey persistence scoped by authenticated workspace."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -8,9 +9,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from trax_api.application_errors import ApplicationError
 from trax_api.auth import AuthContext
 from trax_api.schema import journeys, packing_items, segments
-from trax_api.server_errors import ApplicationError
 from trax_api.server_models import (
     JourneyCreate,
     JourneyResponse,
@@ -23,6 +24,12 @@ from trax_api.server_models import (
     SegmentResponse,
     SegmentUpdate,
 )
+
+
+@dataclass(frozen=True)
+class JourneyUpdateMutation:
+    before: JourneyResponse
+    after: JourneyResponse
 
 
 class JourneyRepository:
@@ -62,8 +69,18 @@ class JourneyRepository:
         await self.session.commit()
         return journey_response(result.mappings().one())
 
-    async def update_journey(self, journey_id: UUID, command: JourneyUpdate) -> JourneyResponse:
-        await self._journey_row(journey_id)
+    async def apply_journey_update(
+        self, journey_id: UUID, command: JourneyUpdate
+    ) -> JourneyUpdateMutation:
+        """Apply one CAS without committing; only the command Unit of Work owns commit."""
+
+        # Lock first so the audit preimage is the exact row version this
+        # transaction can mutate after any concurrent writer commits. Under
+        # READ COMMITTED, a waiting SELECT FOR UPDATE returns that committed
+        # version rather than the snapshot observed before waiting.
+        before = journey_response(await self._journey_row(journey_id, for_update=True))
+        if before.record_version != command.expected_record_version:
+            raise ApplicationError(409, "version_conflict", "The Journey changed; reload it.")
         result = await self.session.execute(
             update(journeys)
             .where(
@@ -83,10 +100,8 @@ class JourneyRepository:
         )
         row = result.mappings().one_or_none()
         if row is None:
-            await self.session.rollback()
             raise ApplicationError(409, "version_conflict", "The Journey changed; reload it.")
-        await self.session.commit()
-        return journey_response(row)
+        return JourneyUpdateMutation(before=before, after=journey_response(row))
 
     async def delete_journey(self, journey_id: UUID) -> None:
         result = await self.session.execute(
@@ -195,8 +210,11 @@ class JourneyRepository:
                 update(segments).where(segments.c.id == current_id).values(**values)
             )
         await self._touch_journey(journey_id)
+        # Read the updated row while the transaction-local RLS authority GUCs
+        # are still active; commit clears them by design.
+        moved = SegmentResponse.model_validate(await self._owned_segment(journey_id, segment_id))
         await self.session.commit()
-        return SegmentResponse.model_validate(await self._owned_segment(journey_id, segment_id))
+        return moved
 
     async def delete_segment(self, journey_id: UUID, segment_id: UUID) -> None:
         await self._owned_segment(journey_id, segment_id)
@@ -298,13 +316,14 @@ class JourneyRepository:
         await self.session.commit()
         return PackingResponse.model_validate(row)
 
-    async def _journey_row(self, journey_id: UUID):
-        result = await self.session.execute(
-            select(journeys).where(
-                journeys.c.id == journey_id,
-                journeys.c.workspace_id == self.context.workspace_id,
-            )
+    async def _journey_row(self, journey_id: UUID, *, for_update: bool = False):
+        statement = select(journeys).where(
+            journeys.c.id == journey_id,
+            journeys.c.workspace_id == self.context.workspace_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
+        result = await self.session.execute(statement)
         row = result.mappings().one_or_none()
         if row is None:
             not_found()

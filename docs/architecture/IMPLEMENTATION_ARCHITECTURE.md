@@ -194,6 +194,50 @@ Commands:
 - define reversibility and compensation;
 - execute in one Unit of Work.
 
+The first production skeleton implements only `journey.update` version 1. The additive
+`POST /api/v1/commands/journey.update` envelope accepts a client command UUID, the fixed
+command type, a positive version resolved by the immutable registry, and the Journey ID plus
+expected-version update payload. Actor, selected workspace and `origin=web` are derived by the
+server. The existing Journey `PUT` preserves its request and successful-response wire shape and adapts to
+the same executor with a server-generated command UUID; its authorization is deliberately corrected
+to the canonical policy rather than preserving the prior VIEWER write gap. Other legacy mutations
+are not thereby claimed canonical. Every current Journey, segment and packing mutation route now
+uses the same `journey.write` policy: only OWNER and EDITOR are allowed, and VIEWER receives the
+canonical `journey_write_forbidden` response before repository mutation.
+
+Execution rechecks and locks the current membership before receipt lookup, permits only OWNER or
+EDITOR, then takes a transaction-scoped advisory lock bound to workspace, actor and command UUID.
+A receipt is scoped by that same tuple. An exact applied replay returns only entity ID, committed
+version and change-set ID; changed content returns `idempotency_conflict` without overwrite.
+Authenticated `version_conflict` and privacy-neutral `resource_not_found` outcomes are terminal
+receipts and replay exactly. Current membership permission is rechecked under a shared row lock
+before any receipt lookup, so demotion cannot expose an earlier result. Different content under the
+same supported command identity is `idempotency_conflict`. Inside the executor, unsupported
+registry versions fail before command/UoW database access; the HTTP route still authenticates,
+checks CSRF and authorizes before invoking that executor. Constraint defects remain sanitized
+internal errors rather than exposing SQL. Runtime SQL executes only as fixed non-superuser,
+non-inheriting, non-`BYPASSRLS` `trax_app`; `trax_admin` is never an application credential and is
+confined to development initialization, migration and test setup. Malformed, unsupported, CSRF,
+permission, internal and serialization failures are not receipts.
+
+The repository locks the Journey row and validates the expected version before its CAS, so under
+READ COMMITTED the event preimage is the exact committed version mutated after any waiting writer.
+It never commits. The command Unit of Work owns one commit or rollback containing
+the Journey version increment, change set, ordered before/after event and minimal receipt. The full before/after Journey event contains personal travel data. The canonical
+[retention policy](RETENTION_AND_DELETION.md#1-default-schedule) limits Personal change/audit events
+to two years and then requires content purge/redaction. The enforcement job, deletion behaviour,
+operator access and acceptance evidence remain unimplemented; this is not an accepted indefinite
+audit store.
+
+`FORCE ROW LEVEL SECURITY` is defence in depth against application scoping mistakes. The shared
+`trax_app` credential can set the transaction-local authority GUCs used by these policies, so RLS is
+not a security boundary against hostile arbitrary SQL executed with that shared credential.
+
+The immutable query registry currently declares `journey.get` and `journey.list` version 1. It is
+metadata only: existing GET routes remain the query transport and never enter the command Unit of
+Work. This skeleton does not add generic plugins, event sourcing, executable undo, outbox delivery,
+full permission algebra, agent/sync clients or canonical status for other mutations.
+
 Queries:
 
 - never mutate domain state;

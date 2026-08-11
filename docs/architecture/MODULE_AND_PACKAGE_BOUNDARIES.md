@@ -113,23 +113,18 @@ foundation
 
 Current classifications:
 
-| Layer         | Modules                                                            |
-| ------------- | ------------------------------------------------------------------ |
-| `composition` | `trax_api.main`                                                    |
-| `transport`   | `request_id`, `routes`, `errors`, `server_errors`, `server_routes` |
-| `application` | `auth`, `journey_repository`                                       |
-| `persistence` | `database`, `schema`                                               |
-| `wire`        | `models`, `server_models`                                          |
-| `foundation`  | `trax_api`, `settings`                                             |
+| Layer         | Modules                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `composition` | `trax_api.main`                                                                            |
+| `transport`   | `request_id`, `routes`, `errors`, `server_errors`, `server_routes`                         |
+| `application` | `application_errors`, `auth`, `command_executor`, `command_registry`, `journey_repository` |
+| `persistence` | `database`, `schema`                                                                       |
+| `wire`        | `models`, `server_models`                                                                  |
+| `foundation`  | `trax_api`, `settings`                                                                     |
 
-`journey_repository` still combines application workflow and persistence concerns in the current narrow slice. It is classified as `application` rather than pretending the Issue #14 command/Unit-of-Work boundary already exists.
+`journey_repository` still combines application workflow and persistence concerns for legacy mutations. The selected Journey update now exposes the no-commit `apply_journey_update` CAS primitive used through `command_executor`; the Unit of Work owns its commit. This does not claim that unrelated repository mutations have migrated.
 
-Two exact temporary exceptions are registered:
-
-- `trax_api.auth → trax_api.server_errors.ApplicationError`;
-- `trax_api.journey_repository → trax_api.server_errors.ApplicationError`.
-
-They exist because `ApplicationError` is currently transport-owned. Each exception permits only that named import, carries a rationale and is bound to removal Issue #14. The checker rejects a widened import and also rejects the exception after it becomes unused, forcing debt removal rather than permanent waiver growth.
+Issue #14 moved `ApplicationError` to the transport-neutral application layer. `server_errors` now only maps that application outcome to HTTP. The two temporary application-to-transport exceptions were removed; the machine registry contains no exception for this boundary.
 
 The Python helper uses `tomllib` for exact `[project].name` parsing and `ast` for imports; it does not import or execute application modules. Literal internal calls through `importlib.import_module` or `__import__` are reported as edges even through import aliases and simple assignment aliases, while non-literal targets fail closed. Tuple/list/starred destructuring that carries either loader is conservatively diagnosed instead of attempting to prove every runtime binding shape safe. It also rejects unclassified modules, forbidden reverse edges, relative escape, file/directory symlinks, realpath escape and duplicate module identities such as both `foo.py` and `foo/__init__.py`. Registry schema version 1 intentionally supports exactly one active Python root.
 

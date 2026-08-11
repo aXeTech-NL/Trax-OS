@@ -16,7 +16,11 @@ from trax_api.settings import Settings
 
 class Database:
     def __init__(self, settings: Settings) -> None:
-        self.engine: AsyncEngine = create_async_engine(settings.database_url, pool_pre_ping=True)
+        self.engine: AsyncEngine = create_async_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+        )
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def close(self) -> None:

@@ -8,6 +8,8 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     MetaData,
     String,
@@ -15,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 metadata = MetaData()
 
@@ -136,6 +138,150 @@ segments = Table(
         name="segment_details_valid",
     ),
 )
+command_change_sets = Table(
+    "command_change_sets",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("workspace_id", UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False),
+    Column("actor_user_id", UUID(as_uuid=True), ForeignKey("users.id"), nullable=False),
+    Column("command_id", UUID(as_uuid=True), nullable=False),
+    Column("command_type", String(100), nullable=False),
+    Column("command_version", Integer, nullable=False),
+    Column("origin", String(32), nullable=False),
+    Column("reversibility", String(20), nullable=False),
+    Column("entity_type", String(100), nullable=False),
+    Column("entity_id", UUID(as_uuid=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "workspace_id", "actor_user_id", "command_id", name="command_change_set_command_unique"
+    ),
+    UniqueConstraint(
+        "id",
+        "workspace_id",
+        "actor_user_id",
+        "entity_type",
+        "entity_id",
+        name="command_change_set_scope_unique",
+    ),
+    UniqueConstraint(
+        "id",
+        "workspace_id",
+        "actor_user_id",
+        "command_id",
+        "entity_type",
+        "entity_id",
+        name="command_change_set_receipt_scope_unique",
+    ),
+    CheckConstraint("command_type = 'journey.update'", name="command_change_set_type_valid"),
+    CheckConstraint("command_version = 1", name="command_change_set_version_valid"),
+    CheckConstraint("entity_type = 'journey'", name="command_change_set_entity_valid"),
+    CheckConstraint(
+        "origin IN ('web','agent','sync','system')", name="command_change_set_origin_valid"
+    ),
+    CheckConstraint(
+        "reversibility IN ('full','compensatable','partial','none')",
+        name="command_change_set_reversibility_valid",
+    ),
+)
+command_change_events = Table(
+    "command_change_events",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("change_set_id", UUID(as_uuid=True), nullable=False),
+    Column("workspace_id", UUID(as_uuid=True), nullable=False),
+    Column("actor_user_id", UUID(as_uuid=True), nullable=False),
+    Column("sequence", Integer, nullable=False),
+    Column("entity_type", String(100), nullable=False),
+    Column("entity_id", UUID(as_uuid=True), nullable=False),
+    Column("action", String(32), nullable=False),
+    Column("before_state", JSONB, nullable=False),
+    Column("after_state", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["change_set_id", "workspace_id", "actor_user_id", "entity_type", "entity_id"],
+        [
+            "command_change_sets.id",
+            "command_change_sets.workspace_id",
+            "command_change_sets.actor_user_id",
+            "command_change_sets.entity_type",
+            "command_change_sets.entity_id",
+        ],
+        ondelete="CASCADE",
+        name="command_change_event_scope_fk",
+    ),
+    UniqueConstraint("change_set_id", "sequence", name="command_change_event_sequence_unique"),
+    CheckConstraint("sequence >= 1", name="command_change_event_sequence_positive"),
+    CheckConstraint("entity_type = 'journey'", name="command_change_event_entity_valid"),
+    CheckConstraint("action = 'updated'", name="command_change_event_action_valid"),
+)
+command_receipts = Table(
+    "command_receipts",
+    metadata,
+    Column("workspace_id", UUID(as_uuid=True), ForeignKey("workspaces.id"), primary_key=True),
+    Column("actor_user_id", UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True),
+    Column("command_id", UUID(as_uuid=True), primary_key=True),
+    Column("command_type", String(100), nullable=False),
+    Column("command_version", Integer, nullable=False),
+    Column("digest_version", Integer, nullable=False),
+    Column("request_digest", String(64), nullable=False),
+    Column("outcome", String(32), nullable=False),
+    Column("entity_type", String(100), nullable=False),
+    Column("entity_id", UUID(as_uuid=True), nullable=False),
+    Column("result_record_version", BigInteger),
+    Column("change_set_id", UUID(as_uuid=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        [
+            "change_set_id",
+            "workspace_id",
+            "actor_user_id",
+            "command_id",
+            "entity_type",
+            "entity_id",
+        ],
+        [
+            "command_change_sets.id",
+            "command_change_sets.workspace_id",
+            "command_change_sets.actor_user_id",
+            "command_change_sets.command_id",
+            "command_change_sets.entity_type",
+            "command_change_sets.entity_id",
+        ],
+        name="command_receipt_change_set_scope_fk",
+    ),
+    CheckConstraint("command_type = 'journey.update'", name="command_receipt_type_valid"),
+    CheckConstraint("command_version = 1", name="command_receipt_version_valid"),
+    CheckConstraint("digest_version = 1", name="command_receipt_digest_version_valid"),
+    CheckConstraint("request_digest ~ '^[0-9a-f]{64}$'", name="command_receipt_digest_shape_valid"),
+    CheckConstraint("entity_type = 'journey'", name="command_receipt_entity_valid"),
+    CheckConstraint(
+        "result_record_version IS NULL OR result_record_version >= 1",
+        name="command_receipt_result_version_positive",
+    ),
+    CheckConstraint(
+        "outcome IN ('applied','version_conflict','resource_not_found')",
+        name="command_receipt_outcome_valid",
+    ),
+    CheckConstraint(
+        "(outcome='applied' AND result_record_version IS NOT NULL "
+        "AND change_set_id IS NOT NULL) OR "
+        "(outcome<>'applied' AND result_record_version IS NULL AND change_set_id IS NULL)",
+        name="command_receipt_result_shape_valid",
+    ),
+)
+Index(
+    "ix_command_change_sets_workspace_created",
+    command_change_sets.c.workspace_id,
+    command_change_sets.c.created_at,
+    command_change_sets.c.id,
+)
+Index(
+    "ix_command_change_events_workspace_created",
+    command_change_events.c.workspace_id,
+    command_change_events.c.created_at,
+    command_change_events.c.id,
+)
+
 packing_items = Table(
     "packing_items",
     metadata,

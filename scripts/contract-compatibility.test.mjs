@@ -145,6 +145,18 @@ test("security-boundary changes require explicit architecture review", () => {
   assert.ok(blocking(document).length > 0);
 });
 
+test("canonical command authentication and CSRF metadata cannot be removed", () => {
+  const missingSecurity = candidate((value) => {
+    delete value.paths["/api/v1/commands/journey.update"].post.security;
+  });
+  const missingCsrf = candidate((value) => {
+    delete value.paths["/api/v1/commands/journey.update"].post.parameters;
+  });
+
+  assert.ok(blocking(missingSecurity).length > 0);
+  assert.ok(blocking(missingCsrf).length > 0);
+});
+
 test("the exact legacy authentication metadata correction is allowed once", () => {
   const legacy = withoutSecurityMetadata(baseline);
 

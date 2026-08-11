@@ -264,6 +264,18 @@
         "layer": "persistence"
       },
       {
+        "module": "trax_api.application_errors",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.command_registry",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.command_executor",
+        "layer": "application"
+      },
+      {
         "module": "trax_api.auth",
         "layer": "application"
       },
@@ -366,21 +378,6 @@
         "to": "foundation"
       }
     ],
-    "exceptions": [
-      {
-        "from": "trax_api.auth",
-        "to": "trax_api.server_errors",
-        "importedNames": ["ApplicationError"],
-        "rationale": "Current authentication application code imports the transport-owned error until the canonical application error boundary is introduced.",
-        "removalIssue": "#14"
-      },
-      {
-        "from": "trax_api.journey_repository",
-        "to": "trax_api.server_errors",
-        "importedNames": ["ApplicationError"],
-        "rationale": "Current Journey application/persistence code imports the transport-owned error until the canonical application error boundary is introduced.",
-        "removalIssue": "#14"
-      }
-    ]
+    "exceptions": []
   }
 }

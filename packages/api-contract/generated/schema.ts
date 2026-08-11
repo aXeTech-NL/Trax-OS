@@ -92,6 +92,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/commands/journey.update": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Canonical Update Journey */
+        readonly post: operations["canonical_update_journey_api_v1_commands_journey_update_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/journeys": {
         readonly parameters: {
             readonly query?: never;
@@ -319,6 +336,21 @@ export interface components {
              */
             readonly status: "available" | "unavailable";
         };
+        /** CommandEntityVersion */
+        readonly CommandEntityVersion: {
+            /**
+             * Entity Id
+             * Format: uuid
+             */
+            readonly entity_id: string;
+            /**
+             * Entity Type
+             * @constant
+             */
+            readonly entity_type: "journey";
+            /** Record Version */
+            readonly record_version: number;
+        };
         /** ErrorBody */
         readonly ErrorBody: {
             /** Code */
@@ -398,6 +430,71 @@ export interface components {
              * @enum {string}
              */
             readonly status: "planning" | "active" | "completed" | "archived";
+        };
+        /** JourneyUpdateCommand */
+        readonly JourneyUpdateCommand: {
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            readonly command_id: string;
+            /**
+             * Command Type
+             * @constant
+             */
+            readonly command_type: "journey.update";
+            /** Command Version */
+            readonly command_version: number;
+            readonly payload: components["schemas"]["JourneyUpdateCommandPayload"];
+        };
+        /** JourneyUpdateCommandPayload */
+        readonly JourneyUpdateCommandPayload: {
+            /** End Date */
+            readonly end_date?: string | null;
+            /** Expected Record Version */
+            readonly expected_record_version: number;
+            /**
+             * Journey Id
+             * Format: uuid
+             */
+            readonly journey_id: string;
+            /** Name */
+            readonly name: string;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "planning" | "active" | "completed" | "archived";
+        };
+        /** JourneyUpdateCommandResponse */
+        readonly JourneyUpdateCommandResponse: {
+            /**
+             * Change Set Id
+             * Format: uuid
+             */
+            readonly change_set_id: string;
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            readonly command_id: string;
+            /**
+             * Command Type
+             * @constant
+             */
+            readonly command_type: "journey.update";
+            /** Command Version */
+            readonly command_version: number;
+            /**
+             * Outcome
+             * @constant
+             */
+            readonly outcome: "applied";
+            /** Replayed */
+            readonly replayed: boolean;
+            readonly result: components["schemas"]["CommandEntityVersion"];
         };
         /** LiveResponse */
         readonly LiveResponse: {
@@ -1108,6 +1205,101 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+            /** @description Authentication required or credentials invalid */
+            readonly 401: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authenticated request is not permitted or CSRF check failed */
+            readonly 403: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            readonly 404: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Version or uniqueness conflict */
+            readonly 409: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            readonly 422: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unexpected server error */
+            readonly 500: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly canonical_update_journey_api_v1_commands_journey_update_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header: {
+                /** @description Double-submit token matching the trax_csrf cookie. */
+                readonly "X-CSRF-Token": string;
+            };
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["JourneyUpdateCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JourneyUpdateCommandResponse"];
                 };
             };
             /** @description Authentication required or credentials invalid */

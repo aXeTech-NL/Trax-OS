@@ -11,10 +11,16 @@ from trax_api.schema import metadata
 
 config = context.config
 if config.config_file_name:
-    fileConfig(config.config_file_name)
+    # Alembic can run in-process in the migration lifecycle test. Preserve
+    # application/test loggers rather than disabling every logger created
+    # before this module is loaded.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 config.set_main_option(
     "sqlalchemy.url",
-    getenv("TRAX_DATABASE_URL", config.get_main_option("sqlalchemy.url")),
+    getenv(
+        "TRAX_MIGRATION_DATABASE_URL",
+        getenv("TRAX_DATABASE_URL", config.get_main_option("sqlalchemy.url")),
+    ),
 )
 
 

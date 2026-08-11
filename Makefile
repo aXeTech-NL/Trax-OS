@@ -2,7 +2,7 @@ COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE = docker compose --env-file "$(COMPOSE_ENV_FILE)"
 UV_RUN = uv run --env-file "$(COMPOSE_ENV_FILE)" --project apps/api
 
-.PHONY: bootstrap generate contract-check contract-compat architecture-check boundaries-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check contract-compat architecture-check boundaries-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-upgrade-development-roles db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -74,6 +74,9 @@ compose-clean:
 
 db-up:
 	$(COMPOSE) up -d --wait database
+
+db-upgrade-development-roles:
+	@COMPOSE_ENV_FILE="$(COMPOSE_ENV_FILE)" apps/api/postgres/upgrade-development-roles.sh
 
 db-migrate:
 	$(UV_RUN) alembic -c apps/api/alembic.ini upgrade head

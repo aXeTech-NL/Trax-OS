@@ -30,9 +30,12 @@ async def request_id_middleware(
         try:
             response = await call_next(request)
         except Exception as exception:
-            # Keep correlation active while logging and constructing the stable envelope.
-            _logger.exception(
-                "Unhandled exception while serving request", extra={"request_id": request_id}
+            # Never render the exception, traceback, SQL parameters, command IDs,
+            # digests or request payloads into logs. Correlation is enough for the
+            # bounded foundation; structured safe diagnostics can be added later.
+            _logger.error(
+                "Unhandled exception while serving request",
+                extra={"request_id": request_id},
             )
             from trax_api.errors import unexpected_exception_handler
 

@@ -24,7 +24,17 @@ cp .env.example .env
 
 The container network uses `TRAX_COMPOSE_DATABASE_URL`, whose hostname is `database`. Host-run API, test and migration commands use `TRAX_DATABASE_URL`, whose hostname is `127.0.0.1`. If credentials change while creating an empty volume, update both URLs and URL-encode credentials where required.
 
-PostgreSQL applies `POSTGRES_USER`, `POSTGRES_DB` and `POSTGRES_PASSWORD` only when it initializes an empty volume. Editing those values does not rotate credentials or rename objects in an existing database. For a development password rotation, connect with the current credentials, run interactive `\password <role>` in `psql`, and only then update `POSTGRES_PASSWORD` plus both URLs. Do not recreate a persistent volume as a credential-rotation shortcut.
+PostgreSQL applies `POSTGRES_USER`, `POSTGRES_DB` and `POSTGRES_PASSWORD` only when it initializes an empty volume. Editing those values does not rotate credentials or rename objects in an existing database. A volume initialized before the fixed `trax_admin`/`trax_app` split must be upgraded before `make compose-up`:
+
+```bash
+make db-up
+TRAX_LEGACY_ADMIN_USER='<current-admin>' \
+TRAX_LEGACY_ADMIN_PASSWORD='<current-password>' \
+make db-upgrade-development-roles
+make db-migrate
+```
+
+The explicit development-only script sends the caller-supplied legacy credentials over stdin, uses safely bound psql values, changes only the two fixed roles in one transaction, fails without revocation on any `trax_app` membership, and performs no application-data DML or volume deletion. Back up valuable data first. This is not a production migration. For later development password rotation, connect with the current credentials, run interactive `\password <role>` in `psql`, and only then update the corresponding password and URLs. Do not recreate a persistent volume as a credential-rotation shortcut.
 
 The database and web ports bind to `127.0.0.1` only. Override non-secret evaluation settings through the environment when parallel checkouts need isolation:
 
@@ -89,4 +99,4 @@ Do not expose the example stack to an untrusted network. A production deployment
 
 ## Compatibility and rollback
 
-The stack adds no API contract, migration or persisted-schema change. Removing the API, migration and web container definitions returns to the host-run development workflow without downgrading PostgreSQL. Normal rollback is `make compose-down` followed by the previous host-run release against the preserved volume. Never use `alembic downgrade` or volume deletion as an automatic rollback.
+The current stack includes additive Alembic command/UoW state and the split development database roles. Removing container definitions does not undo either. Normal container rollback is `make compose-down`; application rollback requires a release-specific reviewed database plan. Never use `alembic downgrade` or volume deletion as an automatic rollback.
