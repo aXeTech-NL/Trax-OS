@@ -1,7 +1,7 @@
 """Authenticated server-backed web routes."""
 
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, Response, Security, status
 from fastapi.security import APIKeyCookie
@@ -10,12 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from trax_api.auth import (
     CSRF_HEADER,
     SESSION_COOKIE,
+    AuthContext,
     authenticate,
     login,
     logout,
     register,
     require_csrf,
 )
+from trax_api.command_executor import CommandExecutor, authorize_permission
+from trax_api.command_registry import JOURNEY_WRITE_PERMISSION
 from trax_api.database import request_session
 from trax_api.journey_repository import JourneyRepository
 from trax_api.routes import (
@@ -25,10 +28,14 @@ from trax_api.routes import (
     SUCCESS_RESPONSE,
 )
 from trax_api.server_models import (
+    CommandEntityVersion,
     JourneyCreate,
     JourneyListResponse,
     JourneyResponse,
     JourneyUpdate,
+    JourneyUpdateCommand,
+    JourneyUpdateCommandPayload,
+    JourneyUpdateCommandResponse,
     LoginRequest,
     LogoutResponse,
     PackingCreate,
@@ -73,10 +80,17 @@ def settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-async def repository(request: Request, session: AsyncSession, *, csrf: bool) -> JourneyRepository:
+async def mutation_context(request: Request, session: AsyncSession) -> AuthContext:
     context = await authenticate(request, session)
-    if csrf:
-        require_csrf(request)
+    require_csrf(request)
+    await authorize_permission(session, context, JOURNEY_WRITE_PERMISSION)
+    return context
+
+
+async def repository(request: Request, session: AsyncSession, *, csrf: bool) -> JourneyRepository:
+    context = (
+        await mutation_context(request, session) if csrf else await authenticate(request, session)
+    )
     return JourneyRepository(session, context)
 
 
@@ -159,7 +173,51 @@ async def get_journey(journey_id: UUID, request: Request, session: Session) -> J
 async def update_journey(
     journey_id: UUID, command: JourneyUpdate, request: Request, session: Session
 ) -> JourneyResponse:
-    return await (await repository(request, session, csrf=True)).update_journey(journey_id, command)
+    context = await mutation_context(request, session)
+    execution = await CommandExecutor(session, context).execute_journey_update(
+        command_id=uuid4(),
+        command_type="journey.update",
+        command_version=1,
+        payload=JourneyUpdateCommandPayload(journey_id=journey_id, **command.model_dump()),
+        origin="web",
+    )
+    if execution.journey is None:
+        raise RuntimeError("Server-generated compatibility command unexpectedly replayed")
+    return execution.journey
+
+
+@mutation_router.post(
+    "/commands/journey.update",
+    response_model=JourneyUpdateCommandResponse,
+    responses=SUCCESS_RESPONSE,
+    openapi_extra={**MUTATION_OPENAPI_EXTRA, "x-trax-command-type": "journey.update"},
+)
+async def canonical_update_journey(
+    command: JourneyUpdateCommand, request: Request, session: Session
+) -> JourneyUpdateCommandResponse:
+    context = await mutation_context(request, session)
+    execution = await CommandExecutor(session, context).execute_journey_update(
+        command_id=command.command_id,
+        command_type=command.command_type,
+        command_version=command.command_version,
+        payload=command.payload,
+        origin="web",
+    )
+    if execution.change_set_id is None or execution.record_version is None:
+        raise RuntimeError("Applied command response is incomplete")
+    return JourneyUpdateCommandResponse(
+        command_id=execution.command_id,
+        command_type="journey.update",
+        command_version=execution.command_version,
+        outcome="applied",
+        replayed=execution.replayed,
+        change_set_id=execution.change_set_id,
+        result=CommandEntityVersion(
+            entity_type="journey",
+            entity_id=execution.entity_id,
+            record_version=execution.record_version,
+        ),
+    )
 
 
 @mutation_router.delete(

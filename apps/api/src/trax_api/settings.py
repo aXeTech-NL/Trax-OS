@@ -15,7 +15,7 @@ def load_settings() -> Settings:
     return Settings(
         database_url=getenv(
             "TRAX_DATABASE_URL",
-            "postgresql+asyncpg://trax:trax-development-only@127.0.0.1:5432/trax",
+            "postgresql+asyncpg://trax_app:trax-application-development-only@127.0.0.1:5432/trax",
         ),
         session_cookie_secure=getenv("TRAX_SESSION_COOKIE_SECURE", "false").lower()
         in {"1", "true", "yes"},

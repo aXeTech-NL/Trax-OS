@@ -1,33 +1,57 @@
+import { TraxApiClient } from "@trax-os/api-client";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { HttpAuthRepository } from "./http-auth-repository";
 
 afterEach(() => vi.unstubAllGlobals());
 
+const contract = {
+  schema_version: "1",
+  api: { current: 1, minimum_supported: 1, maximum_supported: 1 },
+  commands: [
+    {
+      command_type: "journey.update",
+      current: 1,
+      minimum_supported: 1,
+      maximum_supported: 1,
+    },
+  ],
+};
 const userResponse = {
   authenticated: true,
   user: {
-    id: "u1",
+    id: "00000000-0000-4000-8000-000000000001",
     email: "owner@example.com",
     display_name: "Owner",
-    workspace_id: "w1",
+    workspace_id: "00000000-0000-4000-8000-000000000002",
   },
 };
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 test("bootstraps anonymous and maps registration", async () => {
-  const fetch = vi
-    .fn()
+  const request = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(contract))
     .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ error: { code: "authentication_required" } }),
-        { status: 401 },
+      json(
+        {
+          error: {
+            code: "authentication_required",
+            message: "Authentication required.",
+            details: {},
+            request_id: "req_auth",
+          },
+        },
+        401,
       ),
     )
-    .mockResolvedValueOnce(
-      new Response(JSON.stringify(userResponse), { status: 201 }),
-    );
-  vi.stubGlobal("fetch", fetch);
-  const repository = new HttpAuthRepository();
+    .mockResolvedValueOnce(json(userResponse, 201));
+  const repository = new HttpAuthRepository(new TraxApiClient({ request }));
   await expect(repository.session()).resolves.toBeNull();
   await expect(
     repository.register({
@@ -36,27 +60,27 @@ test("bootstraps anonymous and maps registration", async () => {
       displayName: "Owner",
     }),
   ).resolves.toEqual({
-    id: "u1",
+    id: userResponse.user.id,
     email: "owner@example.com",
     displayName: "Owner",
-    workspaceId: "w1",
+    workspaceId: userResponse.user.workspace_id,
   });
-  expect(fetch.mock.calls[1]?.[1]).toMatchObject({
+  expect(request.mock.calls[2]?.[1]).toMatchObject({
     method: "POST",
     credentials: "same-origin",
   });
 });
 
 test("sends the double-submit CSRF token on logout", async () => {
-  document.cookie = "trax_csrf=csrf-value; path=/";
-  const fetch = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ authenticated: false }), { status: 200 }),
-    );
-  vi.stubGlobal("fetch", fetch);
-  await new HttpAuthRepository().logout();
-  expect(fetch.mock.calls[0]?.[1]).toMatchObject({
-    headers: { "X-CSRF-Token": "csrf-value" },
-  });
+  const request = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(contract))
+    .mockResolvedValueOnce(json({ authenticated: false }));
+  const repository = new HttpAuthRepository(
+    new TraxApiClient({ request, csrfToken: () => "csrf-value" }),
+  );
+  await repository.logout();
+  expect(
+    new Headers(request.mock.calls[1]?.[1]?.headers).get("X-CSRF-Token"),
+  ).toBe("csrf-value");
 });

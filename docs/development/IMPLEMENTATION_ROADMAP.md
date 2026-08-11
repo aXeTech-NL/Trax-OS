@@ -15,7 +15,7 @@
 
 ## 2. Phase 0 — architecture, sync spike and traceability gate
 
-Freeze versioned contracts and validate the selected PowerSync integration before detailed sync implementation. Prove scoped replication, multi-party isolation, revocation purge, tombstones, canonical command upload, Capacitor/Tauri support, acceptable licensing and complete self-hosting. A failed mandatory gate blocks release and requires reviewed updates to the canonical sync architecture before implementation continues.
+Freeze versioned contracts and validate the connected-sync control plane plus selected transport/cache adapter before detailed sync implementation. PowerSync remains the V1 target only if its owner/legal gate passes. Prove scoped replication, multi-party isolation, server revocation plus official-client purge lifecycle with no remote-wipe claim, tombstones, canonical command upload, the [ADR-018 untrusted-endpoint lifecycle](../architecture/decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md), Capacitor/Tauri support, acceptable licensing and complete self-hosting. A failed mandatory gate blocks release and requires reviewed updates to the canonical sync architecture before implementation continues.
 
 Create and maintain a traceability matrix:
 
@@ -31,19 +31,21 @@ migration impact
 status = designed | implemented | integrated | validated
 ```
 
+The repository-owned [delivery traceability evidence index](DELIVERY_TRACEABILITY.md) maintains this matrix without copying volatile GitHub issue state. Architecture and this roadmap remain the stable requirement authorities; issues own executable scope, and Issue #68 is navigation only.
+
 ### Phase 0 threat-model traceability
 
-| Field | Issue #10 trace |
-|---|---|
-| Capability | Seven-domain Phase 0 security threat model |
-| Canonical requirement | [Architecture index](../architecture/README.md) and [Phase 0 Threat Model](../security/PHASE_0_THREAT_MODEL.md) |
-| Product requirement | [GitHub issue #10](https://github.com/aXeTech-NL/Trax-OS/issues/10) |
-| Command/query/policy | Design traceability through stable `TH-*` and `MIT-*` IDs; canonical application policy is unchanged |
-| Persistence/integration | Authored JSON register plus dependency-free npm/Make validation; no runtime persistence change |
-| Client flow | Server-backed authenticated web and separately gated Android/macOS local authority, sync, documents and Atlas/MCP flows |
-| Acceptance test | `make threat-model-check`; `npm run security:closure` only after independent review and explicit residual-risk acceptance |
-| Migration impact | None: no database, API, generated contract, dependency or deployment migration |
-| Status | `integrated`; becomes `validated` only after the separate closure review passes |
+| Field                   | Issue #10 trace                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Capability              | Seven-domain Phase 0 security threat model                                                                                |
+| Canonical requirement   | [Architecture index](../architecture/README.md) and [Phase 0 Threat Model](../security/PHASE_0_THREAT_MODEL.md)           |
+| Product requirement     | [GitHub issue #10](https://github.com/aXeTech-NL/Trax-OS/issues/10)                                                       |
+| Command/query/policy    | Design traceability through stable `TH-*` and `MIT-*` IDs; canonical application policy is unchanged                      |
+| Persistence/integration | Authored JSON register plus dependency-free npm/Make validation; no runtime persistence change                            |
+| Client flow             | Server-backed authenticated web and separately gated Android/macOS local authority, sync, documents and Atlas/MCP flows   |
+| Acceptance test         | `make threat-model-check`; `npm run security:closure` only after independent review and explicit residual-risk acceptance |
+| Migration impact        | None: no database, API, generated contract, dependency or deployment migration                                            |
+| Status                  | `integrated`; becomes `validated` only after the separate closure review passes                                           |
 
 The model's integrated status records documentation and CI traceability only. It does not promote any future native, sync, document, Atlas/MCP, expanded-access or production self-host control beyond its actual implementation evidence.
 
@@ -77,6 +79,8 @@ Required foundations:
 - immutable migration policy.
 
 Exit: API and client boot against a migrated empty database without development seed assumptions.
+
+Current foundation evidence includes the Issue #15 same-origin `@trax-os/api-client`: stable `/api/contract` bootstrap, exact initial API/`journey.update` `1..1` negotiation, deterministic generated runtime-schema/operation metadata and validated web transport. This does not complete the separately listed native shells, production browser support or broader Phase 1 exit.
 
 ## 4. Phase 2 — identity, workspace, access and change skeleton
 
@@ -253,9 +257,18 @@ Offline is a V1 capability delivered incrementally across all phases, not a mark
 
 - durable command queue;
 - pending/syncing/applied/conflict/failed states;
-- selected PowerSync adapter with canonical command upload/reconciliation;
+- a Trax-owned replica/epoch/eligibility control plane with the selected transport/cache adapter and canonical command upload/reconciliation;
 - conflict and optimistic reconciliation;
-- revocation purge.
+- current-scope server revocation and official-client purge, with explicit no-remote-wipe disclosure;
+- a server-time `P90D` eligibility checkpoint and graveyard/retention watermark for connected replicas;
+- one-time replica-authenticated lifecycle targets whose accepted reports can advance only server-owned eligibility and never replace command/policy checks or claim local apply/clear attestation;
+- one serialized predicate—eligible state, endpoint time at or before checkpoint time plus `P90D`, and accepted target at or above the current retained floor—before normal target issue/acceptance, incremental credential issue/renewal and command upload; failure atomically enters reset-required and an outstanding old target cannot revive the epoch;
+- an irreversible reset-required state for the stale epoch plus quarantine, epoch rotation, online replica reset and full resync when endpoint elapsed time is greater than `P90D` or a target is older than the retained graveyard floor;
+- encrypted/access-controlled quarantine, revocation-safe denial/purge, explicit export and bounded retention/secure deletion;
+- independent current authorisation, expected-version, incarnation, replica-epoch and digest/idempotency validation on every command;
+- fresh server-generated entity ID/incarnation before connected offline create: any pre-allocation names those values, binds current actor/scope/entity type/replica epoch/expiry/digest and is atomically consumed once under current authorisation;
+- boundary acceptance at exactly `P90D` and `P90D + ε`, including false reports, copied/rolled-back clients, delayed reconnect, floor advancement, UUID reuse, unseen-intent re-enveloping and pending-command review;
+- an explicit standalone local-only exemption that cannot be entered by merely removing endpoint configuration.
 
 ### Device file cache
 

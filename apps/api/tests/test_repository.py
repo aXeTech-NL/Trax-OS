@@ -6,13 +6,14 @@ from uuid import uuid4
 from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from trax_api.application_errors import ApplicationError
 from trax_api.auth import AuthContext
+from trax_api.command_executor import CommandExecutor
 from trax_api.journey_repository import JourneyRepository
 from trax_api.schema import memberships, users, workspaces
-from trax_api.server_errors import ApplicationError
 from trax_api.server_models import (
     JourneyCreate,
-    JourneyUpdate,
+    JourneyUpdateCommandPayload,
     PackingCreate,
     PackingProgressUpdate,
     PackingUpdate,
@@ -22,19 +23,24 @@ from trax_api.server_models import (
 
 DATABASE_URL = getenv(
     "TRAX_DATABASE_URL",
-    "postgresql+asyncpg://trax:trax-development-only@127.0.0.1:5432/trax",
+    "postgresql+asyncpg://trax_app:trax-application-development-only@127.0.0.1:5432/trax",
+)
+ADMIN_DATABASE_URL = getenv(
+    "TRAX_ADMIN_DATABASE_URL",
+    "postgresql+asyncpg://trax_admin:trax-admin-development-only@127.0.0.1:5432/trax",
 )
 
 
 async def repository_scenario() -> None:
-    engine = create_async_engine(DATABASE_URL)
+    admin_engine = create_async_engine(ADMIN_DATABASE_URL, hide_parameters=True)
+    engine = create_async_engine(DATABASE_URL, hide_parameters=True)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     user_id = uuid4()
     workspace_id = uuid4()
     now = datetime.now(UTC)
     email = f"repository+{user_id.hex}@axetech.nl"
-    async with sessions.begin() as session:
-        await session.execute(
+    async with admin_engine.begin() as admin_connection:
+        await admin_connection.execute(
             insert(users).values(
                 id=user_id,
                 email=email,
@@ -42,7 +48,7 @@ async def repository_scenario() -> None:
                 created_at=now,
             )
         )
-        await session.execute(
+        await admin_connection.execute(
             insert(workspaces).values(
                 id=workspace_id,
                 type="PERSONAL",
@@ -50,7 +56,7 @@ async def repository_scenario() -> None:
                 created_at=now,
             )
         )
-        await session.execute(
+        await admin_connection.execute(
             insert(memberships).values(
                 user_id=user_id,
                 workspace_id=workspace_id,
@@ -58,19 +64,24 @@ async def repository_scenario() -> None:
                 created_at=now,
             )
         )
+    await admin_engine.dispose()
     context = AuthContext(
         user_id=user_id,
         workspace_id=workspace_id,
         session_id=uuid4(),
         email=email,
         display_name="Repository",
+        role="OWNER",
     )
 
     async def scoped() -> tuple[AsyncSession, JourneyRepository]:
         session = sessions()
         await session.execute(
-            text("SELECT set_config('trax.user_id', :user_id, true)"),
-            {"user_id": str(user_id)},
+            text(
+                "SELECT set_config('trax.user_id', :user_id, true), "
+                "set_config('trax.workspace_id', :workspace_id, true)"
+            ),
+            {"user_id": str(user_id), "workspace_id": str(workspace_id)},
         )
         return session, JourneyRepository(session, context)
 
@@ -84,29 +95,39 @@ async def repository_scenario() -> None:
     session, repository = await scoped()
     assert (await repository.get_journey(journey.id)).name == "Direct"
     assert len(await repository.list_journeys()) == 1
-    journey = await repository.update_journey(
-        journey.id,
-        JourneyUpdate(
+    updated = await CommandExecutor(session, context).execute_journey_update(
+        command_id=uuid4(),
+        command_type="journey.update",
+        command_version=1,
+        payload=JourneyUpdateCommandPayload(
+            journey_id=journey.id,
             name="Direct updated",
             start_date=None,
             end_date=None,
             status="active",
             expected_record_version=journey.record_version,
         ),
+        origin="web",
     )
+    assert updated.journey is not None
+    journey = updated.journey
     await session.close()
 
     session, repository = await scoped()
     try:
-        await repository.update_journey(
-            journey.id,
-            JourneyUpdate(
+        await CommandExecutor(session, context).execute_journey_update(
+            command_id=uuid4(),
+            command_type="journey.update",
+            command_version=1,
+            payload=JourneyUpdateCommandPayload(
+                journey_id=journey.id,
                 name="Stale",
                 start_date=None,
                 end_date=None,
                 status="planning",
                 expected_record_version=1,
             ),
+            origin="web",
         )
     except ApplicationError as error:
         assert error.code == "version_conflict"
@@ -140,6 +161,8 @@ async def repository_scenario() -> None:
     session, repository = await scoped()
     moved = await repository.reorder_segment(journey.id, move.id, move.record_version, 0)
     assert moved.position == 0
+    await session.close()
+    session, repository = await scoped()
     await repository.delete_segment(journey.id, stay.id)
     await session.close()
 

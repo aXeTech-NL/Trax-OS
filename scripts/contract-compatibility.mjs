@@ -12,6 +12,7 @@ const ALLOWED_DIFFERENCE_TYPES = new Set([
 ]);
 const MUTATION_OPERATIONS = new Set([
   "POST /api/v1/auth/logout",
+  "POST /api/v1/commands/journey.update",
   "POST /api/v1/journeys",
   "PUT /api/v1/journeys/{journey_id}",
   "DELETE /api/v1/journeys/{journey_id}",
@@ -160,7 +161,8 @@ function violatesTraxCompatibilityPolicy(difference) {
         item === "security" ||
         item === "securitySchemes" ||
         item === "servers" ||
-        item === "operationId",
+        item === "operationId" ||
+        item === "x-trax-command-type",
     )
   ) {
     return true;

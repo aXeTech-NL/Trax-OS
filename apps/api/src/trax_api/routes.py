@@ -5,13 +5,17 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 
 from trax_api import __version__
+from trax_api.command_registry import command_version_ranges
 from trax_api.models import (
     CapabilitiesResponse,
     Capability,
+    CommandVersionSupport,
+    ContractDiscoveryResponse,
     ErrorResponse,
     LiveResponse,
     ReadinessChecks,
     ReadyResponse,
+    SupportedVersionRange,
     VersionResponse,
 )
 
@@ -69,7 +73,12 @@ health_router = APIRouter(
     tags=["health"],
     responses={500: ERROR_RESPONSES[500]},
 )
+contract_router = APIRouter(prefix="/api", tags=["instance"], responses=ERROR_RESPONSES)
 api_router = APIRouter(prefix="/api/v1", tags=["instance"], responses=ERROR_RESPONSES)
+
+API_CURRENT_VERSION = 1
+API_MINIMUM_SUPPORTED_VERSION = 1
+API_MAXIMUM_SUPPORTED_VERSION = 1
 
 
 @health_router.get("/live", response_model=LiveResponse, responses=SUCCESS_RESPONSE)
@@ -87,6 +96,30 @@ async def ready(request: Request, response: Response) -> ReadyResponse:
     return ReadyResponse(
         status="ready" if database_ready else "not_ready",
         checks=ReadinessChecks(api="ready", database="ready" if database_ready else "unavailable"),
+    )
+
+
+@contract_router.get(
+    "/contract", response_model=ContractDiscoveryResponse, responses=SUCCESS_RESPONSE
+)
+def contract_discovery() -> ContractDiscoveryResponse:
+    """Advertise inclusive API and canonical command support ranges."""
+    return ContractDiscoveryResponse(
+        schema_version="1",
+        api=SupportedVersionRange(
+            current=API_CURRENT_VERSION,
+            minimum_supported=API_MINIMUM_SUPPORTED_VERSION,
+            maximum_supported=API_MAXIMUM_SUPPORTED_VERSION,
+        ),
+        commands=[
+            CommandVersionSupport(
+                command_type=support.command_type,
+                current=support.current,
+                minimum_supported=support.minimum_supported,
+                maximum_supported=support.maximum_supported,
+            )
+            for support in command_version_ranges()
+        ],
     )
 
 

@@ -41,7 +41,9 @@ All product and platform documentation is organised under this directory. Reposi
 ### Development
 
 - [Development documentation](development/README.md)
+- [Capability-to-client support matrix](development/CAPABILITY_TO_CLIENT_SUPPORT.md)
 - [Implementation Roadmap](development/IMPLEMENTATION_ROADMAP.md)
+- [Delivery traceability evidence index](development/DELIVERY_TRACEABILITY.md)
 
 ## Repository policies
 

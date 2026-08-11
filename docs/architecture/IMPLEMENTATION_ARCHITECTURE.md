@@ -41,7 +41,7 @@ Self-hosting          Docker Compose in V1; Helm/Kubernetes after V1
 
 The complexity of composite keys, row-level security, partial indexes, explicit constraints and migration control justifies direct SQLAlchemy/Alembic use rather than treating an ORM convenience layer as the schema authority.
 
-For the V1 HTTP API, public Pydantic wire models plus FastAPI path-operation declarations are the canonical authored contract. Deterministic OpenAPI 3.1 is the language-neutral publication/review artifact, and TypeScript declarations are generated static projections rather than runtime validators. [ADR-002](decisions/ADR-002-CONTRACT-AUTHORITY.md) defines ownership, compatibility policy and reconsideration triggers.
+For the V1 HTTP API, public Pydantic wire models plus FastAPI path-operation declarations are the canonical authored contract. Deterministic OpenAPI 3.1 is the language-neutral publication/review artifact, and TypeScript declarations remain static projections. The active same-origin [`@trax-os/api-client`](../../packages/api-client/README.md) adds generated runtime-schema/operation projections plus maintained validated transport and highest-overlap negotiation through the stable `/api/contract` bootstrap. [ADR-002](decisions/ADR-002-CONTRACT-AUTHORITY.md) defines contract ownership; [ADR-017](decisions/ADR-017-VERSIONED-RUNTIME-CLIENT.md) defines client scope and negotiation.
 
 ## 3. Public monorepo mapping
 
@@ -71,7 +71,9 @@ packages/
 └── ui/                  shared design-system implementation
 ```
 
-Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. TypeScript adapters retain explicit untrusted-JSON checks and wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
+The tree above is the **target V1 map**, not a list of currently implemented packages. The machine-enforced [module and package boundary registry](MODULE_AND_PACKAGE_BOUNDARIES.md) currently activates `apps/api`, `apps/web`, `packages/api-contract` and `packages/api-client`. Every other concrete named target path is an inactive, non-required reservation until its owning issue and activation gates pass. `packages/model-provider-*` is only an unallocated naming family: each concrete provider path requires a reviewed registry entry before creation and is not claimed as a wildcard reservation.
+
+Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. `packages/api-client` validates transport data but does not become contract authority; TypeScript adapters retain wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
 
 ## 4. Backend module boundaries
 
@@ -191,6 +193,50 @@ Commands:
 - create change sets;
 - define reversibility and compensation;
 - execute in one Unit of Work.
+
+The first production skeleton implements only `journey.update` version 1. The additive
+`POST /api/v1/commands/journey.update` envelope accepts a client command UUID, the fixed
+command type, a positive version resolved by the immutable registry, and the Journey ID plus
+expected-version update payload. Actor, selected workspace and `origin=web` are derived by the
+server. The existing Journey `PUT` preserves its request and successful-response wire shape and adapts to
+the same executor with a server-generated command UUID; its authorization is deliberately corrected
+to the canonical policy rather than preserving the prior VIEWER write gap. Other legacy mutations
+are not thereby claimed canonical. Every current Journey, segment and packing mutation route now
+uses the same `journey.write` policy: only OWNER and EDITOR are allowed, and VIEWER receives the
+canonical `journey_write_forbidden` response before repository mutation.
+
+Execution rechecks and locks the current membership before receipt lookup, permits only OWNER or
+EDITOR, then takes a transaction-scoped advisory lock bound to workspace, actor and command UUID.
+A receipt is scoped by that same tuple. An exact applied replay returns only entity ID, committed
+version and change-set ID; changed content returns `idempotency_conflict` without overwrite.
+Authenticated `version_conflict` and privacy-neutral `resource_not_found` outcomes are terminal
+receipts and replay exactly. Current membership permission is rechecked under a shared row lock
+before any receipt lookup, so demotion cannot expose an earlier result. Different content under the
+same supported command identity is `idempotency_conflict`. Inside the executor, unsupported
+registry versions fail before command/UoW database access; the HTTP route still authenticates,
+checks CSRF and authorizes before invoking that executor. Constraint defects remain sanitized
+internal errors rather than exposing SQL. Runtime SQL executes only as fixed non-superuser,
+non-inheriting, non-`BYPASSRLS` `trax_app`; `trax_admin` is never an application credential and is
+confined to development initialization, migration and test setup. Malformed, unsupported, CSRF,
+permission, internal and serialization failures are not receipts.
+
+The repository locks the Journey row and validates the expected version before its CAS, so under
+READ COMMITTED the event preimage is the exact committed version mutated after any waiting writer.
+It never commits. The command Unit of Work owns one commit or rollback containing
+the Journey version increment, change set, ordered before/after event and minimal receipt. The full before/after Journey event contains personal travel data. The canonical
+[retention policy](RETENTION_AND_DELETION.md#1-default-schedule) limits Personal change/audit events
+to two years and then requires content purge/redaction. The enforcement job, deletion behaviour,
+operator access and acceptance evidence remain unimplemented; this is not an accepted indefinite
+audit store.
+
+`FORCE ROW LEVEL SECURITY` is defence in depth against application scoping mistakes. The shared
+`trax_app` credential can set the transaction-local authority GUCs used by these policies, so RLS is
+not a security boundary against hostile arbitrary SQL executed with that shared credential.
+
+The immutable query registry currently declares `journey.get` and `journey.list` version 1. It is
+metadata only: existing GET routes remain the query transport and never enter the command Unit of
+Work. This skeleton does not add generic plugins, event sourcing, executable undo, outbox delivery,
+full permission algebra, agent/sync clients or canonical status for other mutations.
 
 Queries:
 
@@ -323,7 +369,7 @@ All online authoritative schema changes use explicit immutable Alembic revisions
 - Compare migrated schema and ORM mappings.
 - Use database foreign keys, checks, partial uniqueness and indexes for durable invariants.
 - Do not build a previous-MVP importer: V1 starts from a clean database because no production data is retained.
-- Keep sync tombstones long enough for the selected sync protocol.
+- Retain minimal sync graveyard metadata and reject stale incremental reconciliation using endpoint-owned eligibility time/epoch and the retained floor according to the canonical [`P90D` connected-sync reset boundary](RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary) and [ADR-018](decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md). Client lifecycle telemetry never replaces canonical command or policy checks.
 
 PostgreSQL row-level security is defence in depth for workspace/party isolation. Application policies remain authoritative for field, purpose and relationship rules.
 

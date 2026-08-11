@@ -15,8 +15,8 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from trax_api.application_errors import ApplicationError
 from trax_api.schema import memberships, password_credentials, sessions, users, workspaces
-from trax_api.server_errors import ApplicationError
 from trax_api.server_models import LoginRequest, RegisterRequest, UserResponse
 from trax_api.settings import Settings
 
@@ -34,6 +34,7 @@ class AuthContext:
     session_id: UUID
     email: str
     display_name: str
+    role: str
 
     def response(self) -> UserResponse:
         return UserResponse(
@@ -103,6 +104,7 @@ async def register(
         session_id=session_id,
         email=email,
         display_name=request.display_name.strip(),
+        role="OWNER",
     )
 
 
@@ -120,6 +122,7 @@ async def login(
             users.c.display_name,
             password_credentials.c.password_hash,
             memberships.c.workspace_id,
+            memberships.c.role,
         )
         .join(password_credentials, password_credentials.c.user_id == users.c.id)
         .join(memberships, memberships.c.user_id == users.c.id)
@@ -142,6 +145,7 @@ async def login(
         session_id=session_id,
         email=row["email"],
         display_name=row["display_name"],
+        role=row["role"],
     )
 
 
@@ -210,6 +214,7 @@ async def authenticate(request: Request, session: AsyncSession) -> AuthContext:
             users.c.email,
             users.c.display_name,
             memberships.c.workspace_id,
+            memberships.c.role,
         )
         .join(users, users.c.id == sessions.c.user_id)
         .join(memberships, memberships.c.user_id == users.c.id)
@@ -227,8 +232,11 @@ async def authenticate(request: Request, session: AsyncSession) -> AuthContext:
     if row is None:
         raise ApplicationError(401, "authentication_required", "Authentication is required.")
     await session.execute(
-        text("SELECT set_config('trax.user_id', :user_id, true)"),
-        {"user_id": str(row["user_id"])},
+        text(
+            "SELECT set_config('trax.user_id', :user_id, true), "
+            "set_config('trax.workspace_id', :workspace_id, true)"
+        ),
+        {"user_id": str(row["user_id"]), "workspace_id": str(row["workspace_id"])},
     )
     request.state.csrf_hash = row["csrf_hash"]
     return AuthContext(
@@ -237,6 +245,7 @@ async def authenticate(request: Request, session: AsyncSession) -> AuthContext:
         session_id=row["session_id"],
         email=row["email"],
         display_name=row["display_name"],
+        role=row["role"],
     )
 
 

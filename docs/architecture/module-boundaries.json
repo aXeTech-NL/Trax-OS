@@ -1,0 +1,435 @@
+{
+  "schemaVersion": 1,
+  "ownerAuthority": {
+    "path": ".github/CODEOWNERS",
+    "owner": "@Maurice-aXeTech"
+  },
+  "ignoredDirectoryNames": [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "coverage",
+    "dist",
+    "node_modules"
+  ],
+  "activeRoots": [
+    {
+      "path": "apps/api",
+      "ecosystem": "python",
+      "packageName": "trax-os-api",
+      "owner": "@Maurice-aXeTech",
+      "kind": "application",
+      "publicExports": []
+    },
+    {
+      "path": "apps/web",
+      "ecosystem": "npm",
+      "packageName": "@trax-os/web",
+      "owner": "@Maurice-aXeTech",
+      "kind": "application",
+      "publicExports": []
+    },
+    {
+      "path": "packages/api-contract",
+      "ecosystem": "npm",
+      "packageName": "@trax-os/api-contract",
+      "owner": "@Maurice-aXeTech",
+      "kind": "generated-projection",
+      "publicExports": [".", "./openapi.json", "./runtime-fixtures.json"]
+    },
+    {
+      "path": "packages/api-client",
+      "ecosystem": "npm",
+      "packageName": "@trax-os/api-client",
+      "owner": "@Maurice-aXeTech",
+      "kind": "runtime-client",
+      "publicExports": ["."]
+    }
+  ],
+  "reservedRoots": [
+    {
+      "path": "apps/mobile",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Issue #3 approval plus package manifest, owner, boundary edges and runtime evidence"
+    },
+    {
+      "path": "apps/desktop",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Issue #3 approval plus package manifest, owner, boundary edges and runtime evidence"
+    },
+    {
+      "path": "apps/worker",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed worker delivery issue plus package manifest, owner and boundary edges"
+    },
+    {
+      "path": "apps/mcp-server",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed MCP delivery issue plus package manifest, owner and boundary edges"
+    },
+    {
+      "path": "apps/atlas",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed Atlas delivery issue plus package manifest, owner and boundary edges"
+    },
+    {
+      "path": "packages/domain",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed language-neutral vocabulary scope plus package manifest, owner and boundary edges"
+    },
+    {
+      "path": "packages/commands",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Issue #14 approval plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/queries",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed query-registry issue plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/access-control",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed access-policy issue plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/change-engine",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed change-engine issue plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/sync-engine",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Approved Issue #8 architecture plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/sync-powersync",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Issues #8 and #45 approval plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/credential-store",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed credential-storage issue plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/offline-store",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Issues #2 and #9 approval plus package manifest, exports, owner and boundary edges"
+    },
+    {
+      "path": "packages/ui",
+      "status": "inactive",
+      "required": false,
+      "activationGate": "Reviewed shared-UI issue plus package manifest, exports, owner and boundary edges"
+    }
+  ],
+  "rootEdges": [
+    {
+      "from": "apps/web",
+      "to": "packages/api-client"
+    },
+    {
+      "from": "packages/api-client",
+      "to": "packages/api-contract"
+    }
+  ],
+  "typescript": {
+    "sourceExtensions": [
+      ".ts",
+      ".tsx",
+      ".mts",
+      ".cts",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs"
+    ],
+    "layerRules": [
+      {
+        "root": "apps/web",
+        "prefix": "src/features",
+        "layer": "feature"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "src/repositories",
+        "layer": "repository"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "src/adapters",
+        "layer": "adapter"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "src",
+        "layer": "application"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "scripts",
+        "layer": "tooling"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "eslint.config.js",
+        "layer": "tooling"
+      },
+      {
+        "root": "apps/web",
+        "prefix": "vite.config.ts",
+        "layer": "tooling"
+      },
+      {
+        "root": "packages/api-contract",
+        "prefix": "generated",
+        "layer": "generated"
+      },
+      {
+        "root": "packages/api-client",
+        "prefix": "generated",
+        "layer": "generated"
+      },
+      {
+        "root": "packages/api-client",
+        "prefix": "src",
+        "layer": "client-runtime"
+      }
+    ],
+    "forbiddenLayerEdges": [
+      {
+        "from": "feature",
+        "to": "adapter"
+      },
+      {
+        "from": "repository",
+        "to": "adapter"
+      },
+      {
+        "from": "generated",
+        "to": "application"
+      },
+      {
+        "from": "generated",
+        "to": "feature"
+      },
+      {
+        "from": "generated",
+        "to": "repository"
+      },
+      {
+        "from": "generated",
+        "to": "adapter"
+      },
+      {
+        "from": "generated",
+        "to": "client-runtime"
+      },
+      {
+        "from": "client-runtime",
+        "to": "application"
+      },
+      {
+        "from": "client-runtime",
+        "to": "feature"
+      },
+      {
+        "from": "client-runtime",
+        "to": "repository"
+      },
+      {
+        "from": "client-runtime",
+        "to": "adapter"
+      }
+    ],
+    "generatedInventory": {
+      "root": "packages/api-contract",
+      "files": [
+        "README.md",
+        "generated/openapi.json",
+        "generated/runtime-fixtures.json",
+        "generated/schema.ts",
+        "package.json"
+      ]
+    },
+    "runtimeClientInventory": {
+      "root": "packages/api-client",
+      "files": [
+        "README.md",
+        "generated/client.ts",
+        "package.json",
+        "src/client.test.ts",
+        "src/client.ts",
+        "src/index.ts",
+        "src/negotiation.test.ts",
+        "src/negotiation.ts",
+        "src/validator.test.ts",
+        "src/validator.ts",
+        "tsconfig.json"
+      ]
+    }
+  },
+  "python": {
+    "moduleRoot": "apps/api/src",
+    "package": "trax_api",
+    "modules": [
+      {
+        "module": "trax_api",
+        "layer": "foundation"
+      },
+      {
+        "module": "trax_api.settings",
+        "layer": "foundation"
+      },
+      {
+        "module": "trax_api.models",
+        "layer": "wire"
+      },
+      {
+        "module": "trax_api.server_models",
+        "layer": "wire"
+      },
+      {
+        "module": "trax_api.schema",
+        "layer": "persistence"
+      },
+      {
+        "module": "trax_api.database",
+        "layer": "persistence"
+      },
+      {
+        "module": "trax_api.application_errors",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.command_registry",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.command_executor",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.auth",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.journey_repository",
+        "layer": "application"
+      },
+      {
+        "module": "trax_api.request_id",
+        "layer": "transport"
+      },
+      {
+        "module": "trax_api.routes",
+        "layer": "transport"
+      },
+      {
+        "module": "trax_api.errors",
+        "layer": "transport"
+      },
+      {
+        "module": "trax_api.server_errors",
+        "layer": "transport"
+      },
+      {
+        "module": "trax_api.server_routes",
+        "layer": "transport"
+      },
+      {
+        "module": "trax_api.main",
+        "layer": "composition"
+      }
+    ],
+    "allowedLayerEdges": [
+      {
+        "from": "wire",
+        "to": "wire"
+      },
+      {
+        "from": "persistence",
+        "to": "foundation"
+      },
+      {
+        "from": "application",
+        "to": "application"
+      },
+      {
+        "from": "application",
+        "to": "persistence"
+      },
+      {
+        "from": "application",
+        "to": "wire"
+      },
+      {
+        "from": "application",
+        "to": "foundation"
+      },
+      {
+        "from": "transport",
+        "to": "transport"
+      },
+      {
+        "from": "transport",
+        "to": "application"
+      },
+      {
+        "from": "transport",
+        "to": "persistence"
+      },
+      {
+        "from": "transport",
+        "to": "wire"
+      },
+      {
+        "from": "transport",
+        "to": "foundation"
+      },
+      {
+        "from": "composition",
+        "to": "composition"
+      },
+      {
+        "from": "composition",
+        "to": "transport"
+      },
+      {
+        "from": "composition",
+        "to": "application"
+      },
+      {
+        "from": "composition",
+        "to": "persistence"
+      },
+      {
+        "from": "composition",
+        "to": "wire"
+      },
+      {
+        "from": "composition",
+        "to": "foundation"
+      }
+    ],
+    "exceptions": []
+  }
+}

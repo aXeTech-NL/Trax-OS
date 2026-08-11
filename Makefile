@@ -2,7 +2,7 @@ COMPOSE_ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 COMPOSE = docker compose --env-file "$(COMPOSE_ENV_FILE)"
 UV_RUN = uv run --env-file "$(COMPOSE_ENV_FILE)" --project apps/api
 
-.PHONY: bootstrap generate contract-check contract-compat architecture-check threat-model-check api-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-migrate db-check db-down
+.PHONY: bootstrap generate contract-check contract-compat architecture-check boundaries-check threat-model-check api-check client-check web-check test check dev compose-config compose-build compose-up compose-smoke compose-ps compose-logs compose-down compose-clean db-up db-upgrade-development-roles db-migrate db-check db-down
 
 bootstrap:
 	npm ci
@@ -16,27 +16,36 @@ contract-check:
 
 contract-compat:
 	@test -n "$(BASE_CONTRACT)" || (echo "BASE_CONTRACT is required" >&2; exit 2)
+	@test -n "$(BASE_RUNTIME_FIXTURES)" || (echo "BASE_RUNTIME_FIXTURES is required" >&2; exit 2)
 	npm run contract:compat -- "$(BASE_CONTRACT)" packages/api-contract/generated/openapi.json
+	npm run support:compat -- "$(BASE_RUNTIME_FIXTURES)" packages/api-contract/generated/runtime-fixtures.json
 
 architecture-check:
 	npm run architecture:check
+
+boundaries-check:
+	npm run boundaries:check
 
 threat-model-check:
 	npm run security:check
 
 api-check:
-	$(UV_RUN) ruff format --check apps/api scripts/compose_smoke.py
-	$(UV_RUN) ruff check apps/api scripts/compose_smoke.py
-	$(UV_RUN) mypy apps/api/src apps/api/tests scripts/compose_smoke.py
+	$(UV_RUN) ruff format --check apps/api scripts/compose_smoke.py scripts/python-imports.py
+	$(UV_RUN) ruff check apps/api scripts/compose_smoke.py scripts/python-imports.py
+	$(UV_RUN) mypy apps/api/src apps/api/tests scripts/compose_smoke.py scripts/python-imports.py
+
+client-check:
+	npm run check --workspace @trax-os/api-client
 
 web-check:
 	npm run check --workspace @trax-os/web
 
 test:
 	$(UV_RUN) pytest apps/api/tests
+	npm run test --workspace @trax-os/api-client
 	npm run test --workspace @trax-os/web
 
-check: contract-check architecture-check threat-model-check api-check web-check test
+check: contract-check architecture-check boundaries-check threat-model-check api-check client-check web-check test
 
 dev:
 	$(UV_RUN) npm run dev
@@ -71,6 +80,9 @@ compose-clean:
 
 db-up:
 	$(COMPOSE) up -d --wait database
+
+db-upgrade-development-roles:
+	@COMPOSE_ENV_FILE="$(COMPOSE_ENV_FILE)" apps/api/postgres/upgrade-development-roles.sh
 
 db-migrate:
 	$(UV_RUN) alembic -c apps/api/alembic.ini upgrade head

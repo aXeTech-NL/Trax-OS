@@ -1,3 +1,5 @@
+import { ApiClientError, TraxApiClient } from "@trax-os/api-client";
+
 import {
   EMPTY_JOURNEY_DATA,
   type Journey,
@@ -13,163 +15,222 @@ import {
 
 export class HttpJourneyRepository implements JourneyRepository {
   private current: JourneyData = EMPTY_JOURNEY_DATA;
+  private readonly pendingJourneyUpdates = new Map<
+    string,
+    { readonly commandId: string; readonly signature: string }
+  >();
+
+  constructor(
+    private readonly client = new TraxApiClient(),
+    private readonly commandId: () => string = () => crypto.randomUUID(),
+  ) {}
 
   async load(): Promise<JourneyData> {
-    const list = asItems(await request("/api/v1/journeys"));
-    const journeys = list.map(journeyFrom);
-    const details = await Promise.all(
-      journeys.map(async (journey) => {
-        const [segmentData, packingData] = await Promise.all([
-          request(`/api/v1/journeys/${journey.id}/segments`),
-          request(`/api/v1/journeys/${journey.id}/packing`),
-        ]);
-        return {
-          segments: asItems(segmentData).map(segmentFrom),
-          packing: asItems(packingData).map(packingFrom),
-        };
-      }),
-    );
-    this.current = {
-      schemaVersion: 1,
-      journeys,
-      segments: details.flatMap((item) => item.segments),
-      packingItems: details.flatMap((item) => item.packing),
-    };
-    return structuredClone(this.current);
+    return repositoryCall(async () => {
+      const journeys = (
+        await this.client.request("list_journeys_api_v1_journeys_get", {})
+      ).items.map(journeyFrom);
+      const details = await Promise.all(
+        journeys.map(async (journey) => {
+          const [segmentData, packingData] = await Promise.all([
+            this.client.request(
+              "list_segments_api_v1_journeys__journey_id__segments_get",
+              { path: { journey_id: journey.id } },
+            ),
+            this.client.request(
+              "list_packing_api_v1_journeys__journey_id__packing_get",
+              { path: { journey_id: journey.id } },
+            ),
+          ]);
+          return {
+            segments: segmentData.items.map(segmentFrom),
+            packing: packingData.items.map(packingFrom),
+          };
+        }),
+      );
+      this.current = {
+        schemaVersion: 1,
+        journeys,
+        segments: details.flatMap((item) => item.segments),
+        packingItems: details.flatMap((item) => item.packing),
+      };
+      this.pendingJourneyUpdates.clear();
+      return structuredClone(this.current);
+    });
   }
 
   async save(next: JourneyData): Promise<JourneyData> {
-    const previous = this.current;
-    for (const journey of previous.journeys.filter(
-      (item) => !next.journeys.some((candidate) => candidate.id === item.id),
-    )) {
-      await mutate(`/api/v1/journeys/${journey.id}`, "DELETE");
-    }
-    for (const journey of next.journeys) {
-      const old = previous.journeys.find((item) => item.id === journey.id);
-      if (!old) {
-        await mutate("/api/v1/journeys", "POST", journeyBody(journey, true));
-      } else if (journeyChanged(old, journey)) {
-        await mutate(`/api/v1/journeys/${journey.id}`, "PUT", {
-          ...journeyBody(journey, false),
-          status: journey.status,
-          expected_record_version: old.recordVersion,
-        });
-      }
-    }
-    const livingJourneyIds = new Set(next.journeys.map((item) => item.id));
-    for (const segment of previous.segments.filter(
-      (item) =>
-        livingJourneyIds.has(item.journeyId) &&
-        !next.segments.some((candidate) => candidate.id === item.id),
-    )) {
-      await mutate(
-        `/api/v1/journeys/${segment.journeyId}/segments/${segment.id}`,
-        "DELETE",
-      );
-    }
-    for (const segment of next.segments) {
-      const old = previous.segments.find((item) => item.id === segment.id);
-      if (!old) {
-        await mutate(
-          `/api/v1/journeys/${segment.journeyId}/segments`,
-          "POST",
-          segmentBody(segment, true),
+    return repositoryCall(async () => {
+      const previous = this.current;
+      for (const journey of previous.journeys.filter(
+        (item) => !next.journeys.some((candidate) => candidate.id === item.id),
+      )) {
+        await this.client.request(
+          "delete_journey_api_v1_journeys__journey_id__delete",
+          { path: { journey_id: journey.id } },
         );
-      } else if (segmentChanged(old, segment)) {
-        await mutate(
-          `/api/v1/journeys/${segment.journeyId}/segments/${segment.id}`,
-          "PUT",
-          {
-            ...segmentBody(segment, false),
+      }
+      for (const journey of next.journeys) {
+        const old = previous.journeys.find((item) => item.id === journey.id);
+        if (!old) {
+          await this.client.request("create_journey_api_v1_journeys_post", {
+            body: journeyBody(journey, true),
+          });
+        } else if (journeyChanged(old, journey)) {
+          const commandVersion =
+            await this.client.commandVersion("journey.update");
+          const payload = {
+            journey_id: journey.id,
+            ...journeyBody(journey, false),
+            status: journey.status,
             expected_record_version: old.recordVersion,
-          },
-        );
-      }
-    }
-    for (const journey of next.journeys) {
-      const before = previous.segments
-        .filter((item) => item.journeyId === journey.id)
-        .sort(byPosition);
-      const after = next.segments
-        .filter((item) => item.journeyId === journey.id)
-        .sort(byPosition);
-      const moved = after.find(
-        (item, index) =>
-          before[index]?.id !== item.id &&
-          previous.segments.some((old) => old.id === item.id),
-      );
-      if (moved) {
-        const old = previous.segments.find((item) => item.id === moved.id)!;
-        await mutate(
-          `/api/v1/journeys/${journey.id}/segments/${moved.id}/reorder`,
-          "POST",
-          {
-            expected_record_version: old.recordVersion,
-            new_position: after.findIndex((item) => item.id === moved.id),
-          },
-        );
-      }
-    }
-    for (const item of previous.packingItems.filter(
-      (old) =>
-        livingJourneyIds.has(old.journeyId) &&
-        !next.packingItems.some((candidate) => candidate.id === old.id),
-    )) {
-      await mutate(
-        `/api/v1/journeys/${item.journeyId}/packing/${item.id}`,
-        "DELETE",
-      );
-    }
-    for (const item of next.packingItems) {
-      const old = previous.packingItems.find(
-        (candidate) => candidate.id === item.id,
-      );
-      if (!old) {
-        await mutate(
-          `/api/v1/journeys/${item.journeyId}/packing`,
-          "POST",
-          packingBody(item, true),
-        );
-      } else {
-        if (packingDefinitionChanged(old, item)) {
-          await mutate(
-            `/api/v1/journeys/${item.journeyId}/packing/${item.id}`,
-            "PUT",
+          };
+          const signature = JSON.stringify({
+            command_type: "journey.update",
+            command_version: commandVersion,
+            payload,
+          });
+          const existing = this.pendingJourneyUpdates.get(journey.id);
+          const commandId =
+            existing?.signature === signature
+              ? existing.commandId
+              : this.commandId();
+          this.pendingJourneyUpdates.set(journey.id, { commandId, signature });
+          await this.client.request(
+            "canonical_update_journey_api_v1_commands_journey_update_post",
             {
-              ...packingBody(item, false),
-              expected_record_version: old.recordVersion,
-            },
-          );
-        } else if (old.packedQuantity !== item.packedQuantity) {
-          await mutate(
-            `/api/v1/journeys/${item.journeyId}/packing/${item.id}/progress`,
-            "PUT",
-            {
-              expected_record_version: old.recordVersion,
-              packed_quantity: item.packedQuantity,
+              body: {
+                command_id: commandId,
+                command_type: "journey.update",
+                command_version: commandVersion,
+                payload,
+              },
             },
           );
         }
       }
-    }
-    return this.load();
+      const livingJourneyIds = new Set(next.journeys.map((item) => item.id));
+      for (const segment of previous.segments.filter(
+        (item) =>
+          livingJourneyIds.has(item.journeyId) &&
+          !next.segments.some((candidate) => candidate.id === item.id),
+      )) {
+        await this.client.request(
+          "delete_segment_api_v1_journeys__journey_id__segments__segment_id__delete",
+          { path: { journey_id: segment.journeyId, segment_id: segment.id } },
+        );
+      }
+      for (const segment of next.segments) {
+        const old = previous.segments.find((item) => item.id === segment.id);
+        if (!old) {
+          await this.client.request(
+            "create_segment_api_v1_journeys__journey_id__segments_post",
+            {
+              path: { journey_id: segment.journeyId },
+              body: segmentBody(segment, true),
+            },
+          );
+        } else if (segmentChanged(old, segment)) {
+          await this.client.request(
+            "update_segment_api_v1_journeys__journey_id__segments__segment_id__put",
+            {
+              path: { journey_id: segment.journeyId, segment_id: segment.id },
+              body: {
+                ...segmentBody(segment, false),
+                expected_record_version: old.recordVersion,
+              },
+            },
+          );
+        }
+      }
+      for (const journey of next.journeys) {
+        const before = previous.segments
+          .filter((item) => item.journeyId === journey.id)
+          .sort(byPosition);
+        const after = next.segments
+          .filter((item) => item.journeyId === journey.id)
+          .sort(byPosition);
+        const moved = after.find(
+          (item, index) =>
+            before[index]?.id !== item.id &&
+            previous.segments.some((old) => old.id === item.id),
+        );
+        if (moved) {
+          const old = previous.segments.find((item) => item.id === moved.id)!;
+          await this.client.request(
+            "reorder_segment_api_v1_journeys__journey_id__segments__segment_id__reorder_post",
+            {
+              path: { journey_id: journey.id, segment_id: moved.id },
+              body: {
+                expected_record_version: old.recordVersion,
+                new_position: after.findIndex((item) => item.id === moved.id),
+              },
+            },
+          );
+        }
+      }
+      for (const item of previous.packingItems.filter(
+        (old) =>
+          livingJourneyIds.has(old.journeyId) &&
+          !next.packingItems.some((candidate) => candidate.id === old.id),
+      )) {
+        await this.client.request(
+          "delete_packing_api_v1_journeys__journey_id__packing__item_id__delete",
+          { path: { journey_id: item.journeyId, item_id: item.id } },
+        );
+      }
+      for (const item of next.packingItems) {
+        const old = previous.packingItems.find(
+          (candidate) => candidate.id === item.id,
+        );
+        if (!old) {
+          await this.client.request(
+            "create_packing_api_v1_journeys__journey_id__packing_post",
+            {
+              path: { journey_id: item.journeyId },
+              body: packingBody(item, true),
+            },
+          );
+        } else if (packingDefinitionChanged(old, item)) {
+          await this.client.request(
+            "update_packing_api_v1_journeys__journey_id__packing__item_id__put",
+            {
+              path: { journey_id: item.journeyId, item_id: item.id },
+              body: {
+                ...packingBody(item, false),
+                expected_record_version: old.recordVersion,
+              },
+            },
+          );
+        } else if (old.packedQuantity !== item.packedQuantity) {
+          await this.client.request(
+            "update_packing_progress_api_v1_journeys__journey_id__packing__item_id__progress_put",
+            {
+              path: { journey_id: item.journeyId, item_id: item.id },
+              body: {
+                expected_record_version: old.recordVersion,
+                packed_quantity: item.packedQuantity,
+              },
+            },
+          );
+        }
+      }
+      return this.load();
+    });
   }
 
   loadLocale(): Promise<Locale | null> {
     const value = localStorage.getItem("trax.locale.v1");
     return Promise.resolve(value === "en" || value === "nl" ? value : null);
   }
+
   saveLocale(locale: Locale): Promise<void> {
     localStorage.setItem("trax.locale.v1", locale);
     return Promise.resolve();
   }
 }
 
-function journeyBody(
-  value: Journey,
-  includeId: boolean,
-): Record<string, unknown> {
+function journeyBody(value: Journey, includeId: boolean) {
   return {
     ...(includeId ? { id: value.id } : {}),
     name: value.name,
@@ -177,10 +238,7 @@ function journeyBody(
     end_date: value.endDate,
   };
 }
-function segmentBody(
-  value: JourneySegment,
-  includeId: boolean,
-): Record<string, unknown> {
+function segmentBody(value: JourneySegment, includeId: boolean) {
   return {
     ...(includeId ? { id: value.id } : {}),
     kind: value.kind,
@@ -193,10 +251,7 @@ function segmentBody(
     transport_mode: value.kind === "move" ? value.transportMode : "",
   };
 }
-function packingBody(
-  value: PackingItem,
-  includeId: boolean,
-): Record<string, unknown> {
+function packingBody(value: PackingItem, includeId: boolean) {
   return {
     ...(includeId ? { id: value.id } : {}),
     label: value.label,
@@ -229,53 +284,22 @@ function byPosition(a: JourneySegment, b: JourneySegment) {
   return a.position - b.position;
 }
 
-async function mutate(
-  url: string,
-  method: string,
-  body?: unknown,
-): Promise<void> {
-  await request(url, {
-    method,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRF-Token": csrfToken(),
-    },
-  });
-}
-async function request(url: string, init: RequestInit = {}): Promise<unknown> {
-  let response: Response;
+async function repositoryCall<T>(operation: () => Promise<T>): Promise<T> {
   try {
-    response = await fetch(url, { ...init, credentials: "same-origin" });
-  } catch {
-    throw new RepositoryError("network_error", "Network unavailable");
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof ApiClientError)) throw error;
+    if (error.kind === "network")
+      throw new RepositoryError("network_error", "Network unavailable");
+    if (error.status === 401)
+      throw new RepositoryError("authentication_required", error.code);
+    if (error.status === 409)
+      throw new RepositoryError("version_conflict", error.code);
+    throw new RepositoryError(
+      "server_error",
+      error.kind === "contract" ? "invalid_response" : error.code,
+    );
   }
-  const body: unknown =
-    response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) {
-    const code =
-      record(body) && record(body.error) && typeof body.error.code === "string"
-        ? body.error.code
-        : "server_error";
-    if (response.status === 401)
-      throw new RepositoryError("authentication_required", code);
-    if (response.status === 409)
-      throw new RepositoryError("version_conflict", code);
-    throw new RepositoryError("server_error", code);
-  }
-  return body;
-}
-function csrfToken() {
-  const value = document.cookie
-    .split("; ")
-    .find((cookie) => cookie.startsWith("trax_csrf="))
-    ?.split("=")[1];
-  return value ? decodeURIComponent(value) : "";
-}
-function asItems(value: unknown): unknown[] {
-  if (!record(value) || !Array.isArray(value.items))
-    throw new RepositoryError("server_error", "invalid_response");
-  return value.items;
 }
 function journeyFrom(value: unknown): Journey {
   const row = required(value, [

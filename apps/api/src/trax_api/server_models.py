@@ -57,6 +57,33 @@ class JourneyUpdate(JourneyInput):
     status: Literal["planning", "active", "completed", "archived"]
 
 
+class JourneyUpdateCommandPayload(JourneyUpdate):
+    journey_id: UUID
+
+
+class JourneyUpdateCommand(WireModel):
+    command_id: UUID
+    command_type: Literal["journey.update"]
+    command_version: int = Field(ge=1)
+    payload: JourneyUpdateCommandPayload
+
+
+class CommandEntityVersion(WireModel):
+    entity_type: Literal["journey"]
+    entity_id: UUID
+    record_version: int = Field(ge=1)
+
+
+class JourneyUpdateCommandResponse(WireModel):
+    command_id: UUID
+    command_type: Literal["journey.update"]
+    command_version: int
+    outcome: Literal["applied"]
+    replayed: bool
+    change_set_id: UUID
+    result: CommandEntityVersion
+
+
 class JourneyResponse(WireModel):
     id: UUID
     name: str

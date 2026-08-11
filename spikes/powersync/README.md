@@ -1,0 +1,97 @@
+# Issue #8 PowerSync feasibility spike
+
+**Status:** disposable Phase 0 candidate evidence; committed M2/M3a/M3b-R1/R2/R3/R4 mechanics plus experimental uncommitted M3b-R5a adversarial checkpoint characterization
+
+This sibling harness exercises the real self-hosted PowerSync service and the official Node client against a spike-only PostgreSQL model. It does not import Trax OS production code or establish a production sync architecture.
+
+## What this harness checks
+
+- The token issuer authenticates four simulated principals with distinct, cryptographically random per-run credentials. Query parameters cannot select identity or scope, and Alice cannot obtain Eve or Casey credentials.
+- PowerSync returns 401 for expired, wrong-audience and deterministically tampered-signature JWT fixtures. The tampered signature produces `PSYNC_S2101` with `signature verification failed`; a local `jose` control independently proves the changed signature bytes cannot verify.
+- Sync Streams derive access from `auth.user_id()` plus a spike-only server-maintained projection of active user, workspace membership, Journey membership and exact party membership rows. The projection makes every contributing relationship explicit for this harness and is not a production schema proposal.
+- Alice, Bob, Casey and Eve each use a fresh on-disk SQLite replica.
+- Two Journeys in workspace one prove that workspace access alone cannot expose a foreign Journey. Exact Journey-shared and party-private rows are asserted by UUID and unique payload marker.
+- Online revocation at user, workspace, Journey and party level purges descendant data. Each level is checked in an existing replica and a fresh replica reusing the pre-revocation JWT.
+- Casey's alpha-party revocation preserves Journey-shared and bravo-party data, while Alice's independent alpha grant remains.
+- An SDK-tracked, insert-only `command_queue` uploads only strict experimental update and soft-delete commands through a separately hardened loopback command server. Replicated `resources` remain read-only to the normal harness flow.
+- The experimental server derives actor and current workspace/Journey/party scope from the JWT and PostgreSQL, serializes grant evaluation against relationship revocation, commits mutation/receipt/change event atomically, reauthorizes every retry before receipt lookup, records digest-bound denial receipts, rejects changed idempotency payloads, and retains bounded logical tombstones.
+- The harness observes local overlay state while an injected pre-commit failure remains queued, overlay removal after terminal results, later unrelated progress, canonical convergence, post-commit response-drop retry, competing optimistic outcomes and stale-resurrection rejection. Application-owned results/overlays/session state live in an explicit mode-0600 BetterSQLite sidecar; no PowerSync-owned internal table is read or mutated. The sidecar and public SDK queue are separate SQLite transactions, so server receipts make interruption retry-safe but this harness does not claim local atomicity.
+- Experimental M3b-R1 binds commands to immutable resource incarnation UUIDs and exercises a server-only payload-free graveyard, deterministic endpoint time, exact/after-P30D payload purge, exact/after-P90D marker purge, monotonic retention floor, UUID-reuse protection and a terminal stale-incarnation receipt that permits later queue progress. A P120D marker setting is checked independently from the fixed P90D connected-client support predicate.
+- Experimental M3b-R2 adds server-generated per-replica credentials stored only as digests, per-replica epochs, bounded one-time client-observed checkpoint challenges, exact/after-P90D command gating and an honest-client destructive reset/full resync. Reset rotation is request-idempotent: a distinct strong per-run rotation secret with domain-separated HMAC deterministically recovers the same new credential after response loss, the client persists and acknowledges it before clearing, and mode-0600 phase state resumes before or after clear. Pending commands are never auto-requeued and remain reviewable only when initially authorized and the same incarnation is currently authorized and visible after full sync. The disposable endpoint caps replicas at 16 per user and challenge storage at one row per replica/epoch; these are feasibility limits, not production capacities.
+- Experimental M3b-R3 caps combined application pending commands, unresolved results and persisted reset quarantine at 64 entries and 65,536 reserved serialized bytes. Admission is insert-only and serialized: duplicate IDs cannot overwrite or roll back prior overlay/SDK work. Each command, result and quarantine entry reserves at least 512 bytes; actual representations are checked against their reservation. Reset discovers application-sidecar crash intents with no SDK CRUD entry before any clear, classifies their full command/version/payload intent, and merges them with all prior unresolved quarantine without eviction. Persisted finalized quarantine is loaded on open, an N+1 reset fails before destructive clear, and only explicit acknowledgement/discard frees space. Results likewise become acknowledgeable only after public SDK completion succeeds. Transactional application-state `PRAGMA user_version=3` migration preserves bounded state conservatively. Quarantine v1→v2 migration accepts the actual R2 finalized shape without inventing its absent expected version: reviewable payload and invalidated null-payload state are retained with `expected_record_version: null`; unfinished legacy reset state fails closed without rewriting the file. Nothing is auto-requeued or newly exported, and any future action requires fresh current authorisation, version and conflict validation. Retryable uploads terminate at attempt five. The single-process endpoint allows four in-flight commands and a DB-backed 64-request per-replica/minute window; overflow returns 503/429 before mutation. These small values prove boundary mechanics only, not production sizing or distributed fairness.
+- Experimental M3b-R4 persists the replica credential/epoch with client-name and principal binding in the private application sidecar, validates mode/schema/reset phase before registering anything, and resumes a staged reset in a fresh process after all four services restart on the same named volume. At the exact crash boundary where the new reset JSON exists but the application session is still old, resume validates either the strict old or new binding, repairs/acknowledges and clears through public SDK lifecycle methods before issuing a challenge or constructing a connector. The queued command remains mutation/event/receipt-free and is never auto-uploaded. A closed replica is then read by a fresh container with `--network none`, a read-only root filesystem and the whole runtime mounted read-only; it uses read-only SQLite queries and writes only sanitized IDs/counts to stdout. Dependencies are reinstalled from npm's warmed cache in offline mode, and the stack is started with Docker `--pull never --no-build`. The Compose network is internal and exact image IDs are compared before/after. This proves cached container isolation and honest-client process recovery, not total host egress isolation, HA or physical-power-loss durability.
+- Experimental M3b-R5a uses a registered raw HTTP-only replica that never opens PowerSync or SQLite. It demonstrates the negative capability directly: after more than `P90D`, immediate acknowledgement of a newly issued client-observed challenge renews incremental eligibility without sync; an unchanged authorised old update can then apply. Current authorisation, expected version, resource incarnation, missing-target denial and digest/idempotency controls still reject their exact adverse cases independently. A later raw reset acknowledgement rotates the epoch without local clear/full sync; the old epoch is rejected, while a never-submitted pre-reset intent can be re-enveloped under the new epoch and apply when current checks match. Create commands do not exist in this protocol and are not tested. The technical recommendation is therefore **do not use checkpoint acknowledgement as authority**.
+
+The M3a endpoint, envelope, tables, command names and completion policy are spike-only facsimiles. They do not define or freeze Issue #14, implement production Issue #45, or establish Issue #46 queue/conflict behavior.
+
+A pre-revocation JWT can authenticate until expiry, but active server relationships determine its current scope. This is not token blacklisting. Logical disappearance from a connected SQLite query is not forensic erasure, and a permanently offline or hostile endpoint cannot be remotely wiped.
+
+## Explicit non-goals
+
+This harness does not test production commands, create/restore, production-scale queue/conflict storms, distributed backpressure/fairness, node/volume loss, HA/multi-node restart, native clients, encryption, TLS, production RLS/policy equivalence, upgrades, rollback or physical power-loss durability. It does not validate Android, Capacitor, Tauri or macOS support. M3b-R1/R2 test only disposable retention/incarnation and honest-client replica-lifecycle primitives for the selected [`P90D` minimal-graveyard plus stale-replica-reset policy](../../docs/architecture/RETENTION_AND_DELETION.md#connected-sync-offline-support-boundary). PowerSync exposes no server-verifiable proof that a specific client durably applied a checkpoint: R5a demonstrates that the acknowledgement is client-observed, not server-attested. R5a is technical characterization only and remains evidence for the later [ADR-018](../../docs/architecture/decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md) decision. The [bounded platform-capability assessment](../../docs/security/evidence/ISSUE_8_BACKEND_VERIFIABLE_CHECKPOINT_ALTERNATIVE.md) identified no qualifying implementation path in the reviewed public general Android/macOS APIs; the owner subsequently accepted server-recorded eligibility plus honest-client lifecycle telemetry, with explicit hostile/copied-endpoint residual risk. This does not turn the spike acknowledgement into attestation or imply independent security, legal or production approval. A production stale epoch must not return through normal checkpoint renewal; reset/rotation/full-sync lifecycle and all independent command checks remain required. The mode-0600 sidecars are logical plaintext protection, not encrypted storage or forensic deletion evidence. Private JSON replacement fsyncs temporary content and the parent directory where supported, but no physical power-loss guarantee is claimed for untested host/filesystem combinations. Total host egress isolation, node/volume loss, production capacity sizing/distributed enforcement and native acceptance remain later gates. The root `compose.yaml`, application schema, Alembic history and generated contracts are untouched.
+
+## Pinned inputs
+
+`versions.env` records immutable image indexes, linux/amd64 manifests, source commits, exact npm integrity and PowerSync service/SDK license hashes. The verifier independently resolves version tags, platform manifests and PowerSync image version/revision/license labels. PowerSync service `1.23.3` is labelled `FSL-1.1-ALv2`; legal/product acceptance remains pending.
+
+The lockfile pins `better-sqlite3`, but its install script may download a platform prebuild or compile native code outside npm lockfile checksums. The executed native binary is therefore **not independently provenance-validated** by this slice.
+
+## Requirements
+
+- Linux x86_64 for the currently recorded runtime evidence
+- Node.js 22
+- `npx` able to execute exact npm `10.9.4`
+- Docker Engine, Docker Compose and Docker Buildx
+- Git, curl, Bash, and either `sha256sum` or `shasum`
+- outbound access for source/registry verification and the first image/package pull
+- free loopback ports 15432, 16060, 17070 and 18080, or explicit `PS8_*_PORT` overrides
+
+The scripts fail rather than reuse an occupied port or an existing Compose project.
+
+## Run
+
+From the repository root:
+
+```bash
+spikes/powersync/scripts/verify-provenance.sh
+spikes/powersync/scripts/run.sh
+```
+
+`run.sh` generates a UUID run identity, distinct per-principal credentials, an ownership marker and a unique Compose project. It enforces Node 22/npm 10.9.4, performs locked installation, compilation, unit tests, Compose validation, digest-pinned pulls, readiness-gated startup and the real M2/M3a plus experimental M3b-R1/R2/R3/R4/R5a integration, restart and cached-startup tests. Initial sync requires a locally client-observed completed checkpoint; timeouts reject and close the partial replica. R5a proves this local observation is not a backend-verifiable PowerSync attestation.
+
+Runtime evidence is retained per run under ignored `spikes/powersync/.evidence/<run-id>/`. Each successful run keeps structured assertion/token-probe observations plus a credential/JWT-sanitized TAP transcript. A successful observation is recorded as `executed-uncommitted`, not immutable `passed`, and only after guarded stack/volume cleanup succeeds. Failed-run evidence is not deleted by the next run.
+
+`PS8_KEEP_STACK=1` retains the stack only when a run fails or is interrupted before the mandatory success-path cleanup. A successful run always removes its containers, volume and network so its cleanup-attested evidence remains truthful. For deliberate failed-run inspection, record the printed run/project identity and use those exact values for cleanup.
+
+## Guarded cleanup of a deliberately retained stack
+
+```bash
+export PS8_RUN_ID=<exact-v4-uuid>
+export COMPOSE_PROJECT_NAME=<exact-trax-ps8-project>
+export PS8_OWNER_FILE="$PWD/spikes/powersync/.runtime/$PS8_RUN_ID/owner"
+spikes/powersync/scripts/clean.sh
+```
+
+Cleanup requires a matching ownership marker and verifies the custom run/owner labels on every project container, volume and network before invoking `down --volumes`. A reusable name prefix alone is insufficient.
+
+## Focused checks without a live stack
+
+```bash
+npx --yes npm@10.9.4 ci --prefix spikes/powersync/harness
+npx --yes npm@10.9.4 run check --prefix spikes/powersync/harness
+
+PS8_RUN_ID=12345678-1234-4234-8234-123456789abc \
+PS8_TOKEN_CREDENTIALS_JSON='{"alice":"configuration-only-secret-000000001","bob":"configuration-only-secret-000000002","casey":"configuration-only-secret-000000003","eve":"configuration-only-secret-000000004"}' \
+PS8_POST_COMMIT_FAULT_SECRET='configuration-only-fault-secret-000001' \
+docker compose \
+  --project-name trax-ps8-configcheck \
+  --env-file spikes/powersync/versions.env \
+  --env-file spikes/powersync/.env.example \
+  -f spikes/powersync/compose.yaml config --quiet
+```
+
+The real integration command intentionally refuses direct execution without wrapper-bound run identity, endpoints and service metadata.
+
+## Evidence semantics
+
+Evidence entries use `designed`, `executed`, `executed-uncommitted`, `passed`, `failed` or `not-validated`. Execution states require an exact command, UTC time, platform and exit code. `executed-uncommitted` additionally binds the run UUID, Compose project, wrapper command, container image IDs/digests, service state, structured assertions and sanitized test transcript. Candidate identity includes a digest over the spike executable, configuration, schema and test sources; documentation and generated/runtime artifacts are explicitly outside that digest so post-run evidence writing cannot invalidate the executable attestation. It means assertions succeeded on a mutable candidate; only a committed, independently rerun artifact can become attested `passed` evidence. See [`docs/security/evidence/ISSUE_8_POWERSYNC_FEASIBILITY.md`](../../docs/security/evidence/ISSUE_8_POWERSYNC_FEASIBILITY.md).

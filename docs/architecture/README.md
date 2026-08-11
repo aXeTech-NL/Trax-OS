@@ -11,7 +11,9 @@ Trax OS is an agentic, offline-first travel operating system with a shared comma
 - [Atlas Model Provider Architecture](ATLAS_PROVIDER_MODEL.md) — local, bring-your-own OpenAI-compatible and managed-credit provider modes, credential handling and egress security.
 - [V1 Agent-assisted Web Research](AGENT_RESEARCH_V1.md) — browsing-capable agent research, MCP candidate submission, source verification and deferred commercial APIs.
 - [Implementation Architecture](IMPLEMENTATION_ARCHITECTURE.md) — modular monolith, React/FastAPI boundaries, PowerSync integration, Unit of Work, contracts, routing, migrations and fitness checks.
+- [Module and Package Boundaries](MODULE_AND_PACKAGE_BOUNDARIES.md) — machine-enforced active roots, current TypeScript/Python import DAGs and explicitly inactive target paths.
 - [ADR-002: HTTP contract authority](decisions/ADR-002-CONTRACT-AUTHORITY.md) — Pydantic/FastAPI authored authority, generated OpenAPI/TypeScript ownership and compatibility policy.
+- [ADR-018: Connected-sync trust boundary](decisions/ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md) — server-owned eligibility, honest-client lifecycle telemetry and accepted endpoint limitations.
 - [Target Domain Model](DOMAIN_MODEL.md) — consolidated ownership, journey, planning, operations, document, provider, change and sync model.
 - [Retention and Deletion](RETENTION_AND_DELETION.md) — V1 retention, cancellation/export and purge defaults.
 - [Provider and Source Registry](../integrations/SOURCE_REGISTRY.md) — controlled V1 provider and authoritative-domain baseline.
@@ -33,6 +35,7 @@ If implementation and documentation diverge, bring the implementation back into 
 - Every meaningful mutation creates an auditable change set.
 - Risk, approval and reversibility are application policies.
 - Offline retries are idempotent and conflict-aware.
+- Connected-sync lifecycle reports never replace current server policy/command checks or prove local apply, clear or remote wipe.
 - Sensitive document plaintext and decryption keys remain on trusted devices.
 - Personal and Agency modes share one public application core.
 - Roles are permission collections assigned at an explicit scope.

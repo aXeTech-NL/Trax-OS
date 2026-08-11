@@ -1,0 +1,158 @@
+x-spike-labels: &spike-labels
+  com.trax-os.spike.owner: issue-8-powersync
+  com.trax-os.spike.run: ${PS8_RUN_ID:?PS8_RUN_ID is required}
+
+services:
+  source-db:
+    image: ${POSTGRES_IMAGE}
+    restart: "no"
+    labels: *spike-labels
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    environment:
+      POSTGRES_DB: ${PS8_POSTGRES_DB}
+      POSTGRES_USER: ${PS8_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PS8_POSTGRES_PASSWORD}
+    expose:
+      - "5432"
+    volumes:
+      - source-data:/var/lib/postgresql/data
+      - ./postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  token-server:
+    image: trax-os/powersync-spike-token-server:issue-8-candidate
+    build:
+      context: harness
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE}
+    restart: "no"
+    labels: *spike-labels
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PS8_TOKEN_HOST: 0.0.0.0
+      PS8_TOKEN_PORT: 6060
+      PS8_DATABASE_URL: postgres://${PS8_TOKEN_READER_USER}:${PS8_TOKEN_READER_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
+      PS8_TOKEN_CREDENTIALS_JSON: ${PS8_TOKEN_CREDENTIALS_JSON:?per-run principal credentials are required}
+      PS8_ENABLE_INVALID_TOKEN_FIXTURES: "1"
+    expose:
+      - "6060"
+    depends_on:
+      source-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:6060/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  command-server:
+    image: trax-os/powersync-spike-command-server:issue-8-candidate
+    build:
+      context: harness
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE}
+    command: ["node", "lib/src/command-server.js"]
+    restart: "no"
+    labels: *spike-labels
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PS8_COMMAND_HOST: 0.0.0.0
+      PS8_COMMAND_PORT: 7070
+      PS8_DATABASE_URL: postgres://${PS8_COMMAND_WRITER_USER}:${PS8_COMMAND_WRITER_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
+      PS8_JWKS_URL: http://token-server:6060/jwks
+      PS8_POST_COMMIT_FAULT_SECRET: ${PS8_POST_COMMIT_FAULT_SECRET:?per-run fault secret is required}
+      PS8_REPLICA_ROTATION_SECRET: ${PS8_REPLICA_ROTATION_SECRET:?distinct per-run replica rotation secret is required}
+    expose:
+      - "7070"
+    depends_on:
+      source-db:
+        condition: service_healthy
+      token-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:7070/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  powersync:
+    image: ${POWERSYNC_SERVICE_IMAGE}
+    restart: "no"
+    labels: *spike-labels
+    read_only: true
+    init: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    command: ["start", "-r", "unified"]
+    environment:
+      POWERSYNC_CONFIG_PATH: /config/service.yaml
+      PS_DATA_SOURCE_URI: postgres://${PS8_REPLICATION_USER}:${PS8_REPLICATION_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
+      PS_STORAGE_SOURCE_URI: postgres://${PS8_STORAGE_USER}:${PS8_STORAGE_PASSWORD}@source-db:5432/${PS8_POSTGRES_DB}
+      PS_JWKS_URL: http://token-server:6060/jwks
+    volumes:
+      - ./config:/config:ro
+    expose:
+      - "8080"
+    depends_on:
+      source-db:
+        condition: service_healthy
+      token-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8080/probes/readiness').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 3s
+      retries: 45
+      start_period: 10s
+
+volumes:
+  source-data:
+    labels: *spike-labels
+
+networks:
+  default:
+    internal: true
+    labels: *spike-labels

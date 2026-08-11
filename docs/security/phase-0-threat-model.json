@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "modelId": "TM-PHASE0-001",
-  "modelVersion": "1.0.0",
+  "modelVersion": "1.1.0",
   "modelStatus": "integrated",
   "title": "Trax OS Phase 0 threat model",
   "issue": "https://github.com/aXeTech-NL/Trax-OS/issues/10",
@@ -2368,22 +2368,22 @@
     {
       "id": "TB-SYNC-004",
       "domainId": "DOM-SYNC",
-      "title": "Revocation and tombstones to device purge",
-      "description": "Revocation state causes rows and wrapped keys to be purged on later sync.",
+      "title": "Revocation and eligibility to official-client purge",
+      "description": "Server revocation and eligibility state deny future access while the official client reports purge/reset lifecycle; hostile local deletion is not observable.",
       "trustZones": [
-        "Authoritative revocation state",
-        "Potentially offline cached data"
+        "Authoritative revocation and eligibility state",
+        "Potentially offline untrusted replica"
       ],
       "components": [
-        "Authoritative revocation state",
-        "Potentially offline cached data"
+        "Authoritative revocation and eligibility state",
+        "Potentially offline untrusted replica"
       ],
       "dataFlows": [
         {
-          "direction": "Authoritative revocation state -> Potentially offline cached data",
-          "data": "Revocation state causes rows and wrapped keys to be purged on later sync.",
+          "direction": "Authoritative revocation and eligibility state -> Potentially offline untrusted replica",
+          "data": "Revocation/reset state and retained-floor targets drive official-client purge, quarantine and full resync; lifecycle reports return as untrusted telemetry.",
           "channel": "versioned application or platform boundary",
-          "authority": "Authority remains with the canonical architecture described by references."
+          "authority": "The endpoint owns access and eligibility; lifecycle reports do not prove local apply, clear or remote wipe."
         }
       ],
       "assets": [
@@ -2392,7 +2392,8 @@
         "revocation tombstones"
       ],
       "assumptions": [
-        "Open Phase 0 and implementation issues may refine this boundary; changes trigger re-review."
+        "Official clients execute the documented purge/reset lifecycle; copied or modified clients may report falsely and retain data.",
+        "Owner product-risk acceptance does not replace independent Phase 0 or production security review."
       ],
       "currentCapability": "not-implemented",
       "threatIds": [
@@ -4497,9 +4498,10 @@
         "TB-SYNC-004"
       ],
       "category": "information-disclosure",
-      "scenario": "A permanently offline or hostile device retains previously authorized data and keys after revocation.",
+      "scenario": "A permanently offline, copied, rolled-back or hostile device retains previously authorized data and keys, falsely reports sync/reset lifecycle completion or re-envelopes unseen intent after revocation or expiry.",
       "preconditions": [
-        "A device retains cached rows/wrapped keys while offline when memberships, roles or grants are revoked."
+        "A device has received cached rows, wrapped keys or pending intent before memberships, roles, grants, credentials or its eligibility epoch change.",
+        "General-client lifecycle reports are not bound to attested durable local storage transitions."
       ],
       "affectedAssets": [
         "cached private data",
@@ -5865,8 +5867,8 @@
     },
     {
       "id": "MIT-SYNC-004",
-      "title": "Control for revocation and tombstones to device purge",
-      "control": "Invalidate online grants immediately, retain tombstones for the supported offline window and purge/recheck on reconnect; disclose endpoint residual risk.",
+      "title": "Server-owned eligibility, revocation and honest-client purge control",
+      "control": "Invalidate current grants and replica epochs server-side; enforce endpoint-time P90D and retained-floor eligibility; bind lifecycle reports to one-time replica/epoch targets but treat them only as telemetry; independently check current authorization, version, incarnation and idempotency; quarantine/reset official clients and disclose that remote wipe is not guaranteed.",
       "controlType": "preventive",
       "implementationStatus": "designed",
       "ownerId": "OWN-SYNC",
@@ -5876,16 +5878,17 @@
       "references": [
         {
           "kind": "repository",
-          "path": "docs/architecture/AGENTIC_CORE.md",
-          "anchor": "8-optimistic-ui-and-offline-commands"
+          "path": "docs/architecture/RETENTION_AND_DELETION.md",
+          "anchor": "connected-sync-offline-support-boundary"
         }
       ],
       "limitations": [
-        "Control effectiveness requires the linked implementation-specific evidence; design text alone is not proof."
+        "A copied or hostile endpoint can report lifecycle completion falsely, retain disclosed plaintext or keys and re-envelope unseen intent when all current server checks still permit the mutation.",
+        "Owner product-risk acceptance is not independent implementation or Phase 0 residual-risk acceptance."
       ],
       "reopeningTriggers": [
-        "Canonical boundary or provider changes.",
-        "A linked implementation test fails or a new vulnerability class is discovered."
+        "The P90D boundary, replica authority, creation identity or selected adapter changes.",
+        "A linked implementation test fails, independent review rejects the residual risk or a storage-bound platform primitive becomes available."
       ]
     },
     {
@@ -7661,18 +7664,19 @@
         "score": 4,
         "rating": "medium"
       },
-      "rationale": "Previously authorized plaintext and keys can remain usable indefinitely on a hostile device. Likelihood falls from likely to possible because immediate online invalidation, retained tombstones and purge-on-reconnect prevent new access and honest-client retention. Impact falls from severe to serious because remote deletion cannot be guaranteed, so residual privacy impact remains serious.",
+      "rationale": "Previously authorized plaintext and keys can remain usable indefinitely on a hostile device, lifecycle completion can be reported falsely and unseen intent can be re-enveloped. Likelihood falls from likely to possible because immediate server revocation, current command checks, immutable incarnation, exact endpoint-owned eligibility and honest-client purge prevent new unauthorized access and common official-client retention. Impact falls from severe to serious because remote deletion cannot be guaranteed and a currently authorized re-enveloped write can still cause scoped privacy or integrity harm, so residual impact remains serious.",
       "affectedAssumptions": [
-        "Controls are correctly implemented and the linked future gates pass before the capability is advertised."
+        "Controls are correctly implemented and the linked future gates pass before the capability is advertised.",
+        "The owner accepted the ADR-018 product guarantee, while independent Phase 0 and production security acceptance remain pending."
       ],
       "ownerId": "OWN-SYNC",
       "disposition": "pending",
       "acceptanceScope": "phase-0-design",
       "acceptance": null,
       "reopeningTriggers": [
-        "Implementation differs from this model.",
-        "A dependency, client authority or canonical policy changes.",
-        "Verification fails or evidence becomes stale."
+        "Implementation differs from ADR-018 or lets lifecycle telemetry replace current server checks.",
+        "A dependency, client authority, create-identity rule or canonical policy changes.",
+        "Verification fails, evidence becomes stale or a qualified storage-bound platform primitive appears."
       ]
     },
     {

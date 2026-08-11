@@ -17,6 +17,18 @@ const decisionFiles = [
   "ADR-005-MEMBERSHIP-AND-PARTICIPATION.md",
   "ADR-016-ACCESS-POLICY-ALGEBRA.md",
 ];
+const acceptedDecisionRules = [
+  {
+    file: "ADR-017-VERSIONED-RUNTIME-CLIENT.md",
+    issue: "https://github.com/aXeTech-NL/Trax-OS/issues/15",
+    evidenceHeading: "## Evidence and limits",
+  },
+  {
+    file: "ADR-018-CONNECTED-SYNC-TRUST-BOUNDARY.md",
+    issue: "https://github.com/aXeTech-NL/Trax-OS/issues/8",
+    evidenceHeading: "## Review and validation evidence",
+  },
+];
 const canonicalPolicyFiles = [
   "docs/architecture/AGENCY_ACCESS_MODEL.md",
   "docs/architecture/AGENTIC_CORE.md",
@@ -632,6 +644,33 @@ for (const file of decisionFiles) {
     "## Compatibility and migration impact",
     "## Validation evidence",
     "https://github.com/aXeTech-NL/Trax-OS/issues/6",
+  ]) {
+    if (!content.includes(required)) fail(`${relativePath} is missing ${required}`);
+  }
+
+  const logRow = decisionLog
+    .split("\n")
+    .find((line) => line.startsWith(`| [${id}]`));
+  if (!logRow || !logRow.includes("| Accepted |")) {
+    fail(`Decision log does not record ${id} as Accepted`);
+  }
+
+  validateRelativeLinks(join(root, relativePath));
+}
+for (const { file, issue, evidenceHeading } of acceptedDecisionRules) {
+  const relativePath = `docs/architecture/decisions/${file}`;
+  const content = read(relativePath);
+  const id = file.slice(0, 7);
+
+  for (const required of [
+    "- **Status:** Accepted",
+    "- **Date:**",
+    "- **Decision owner/approver:** repository CODEOWNER (`@Maurice-aXeTech`)",
+    "- **Traceability:**",
+    "## Decision",
+    "## Compatibility and migration impact",
+    evidenceHeading,
+    issue,
   ]) {
     if (!content.includes(required)) fail(`${relativePath} is missing ${required}`);
   }
