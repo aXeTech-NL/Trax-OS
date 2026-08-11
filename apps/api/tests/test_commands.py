@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from types import MappingProxyType
 from uuid import UUID
@@ -14,6 +15,7 @@ from trax_api.command_registry import (
     _immutable_query_registry,
     _immutable_registry,
     command_digest_v1,
+    command_version_ranges,
     resolve_command,
     resolve_query,
     role_allows,
@@ -55,6 +57,31 @@ def test_command_and_query_registries_are_exact_and_immutable() -> None:
     assert not role_allows("OWNER", "unregistered.permission")
     with pytest.raises(TypeError):
         COMMANDS[("journey.update", 2)] = command  # type: ignore[index]
+
+
+def test_command_support_projection_requires_positive_contiguous_versions() -> None:
+    definition = resolve_command("journey.update", 1)
+    second = CommandDefinition(
+        command_type=definition.command_type,
+        version=2,
+        payload_model=definition.payload_model,
+        permission=definition.permission,
+        risk=definition.risk,
+        reversibility=definition.reversibility,
+        handler_key="journey.update.v2",
+    )
+    support = command_version_ranges((definition, second))
+    assert len(support) == 1
+    assert support[0].command_type == "journey.update"
+    assert (support[0].minimum_supported, support[0].current, support[0].maximum_supported) == (
+        1,
+        2,
+        2,
+    )
+    with pytest.raises(ValueError, match="contiguous"):
+        command_version_ranges((definition, replace(second, version=3)))
+    with pytest.raises(ValueError, match="positive"):
+        command_version_ranges((replace(definition, version=0),))
 
 
 def test_registry_rejects_duplicates_and_resolves_stable_errors() -> None:

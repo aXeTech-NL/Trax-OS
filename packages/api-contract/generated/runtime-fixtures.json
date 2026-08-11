@@ -24,6 +24,22 @@
     ],
     "schema_version": "1"
   },
+  "contract": {
+    "api": {
+      "current": 1,
+      "maximum_supported": 1,
+      "minimum_supported": 1
+    },
+    "commands": [
+      {
+        "command_type": "journey.update",
+        "current": 1,
+        "maximum_supported": 1,
+        "minimum_supported": 1
+      }
+    ],
+    "schema_version": "1"
+  },
   "version": {
     "api_version": "1",
     "application": "Trax OS",

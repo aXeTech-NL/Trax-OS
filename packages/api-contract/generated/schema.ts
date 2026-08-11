@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    readonly "/api/contract": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Contract Discovery
+         * @description Advertise inclusive API and canonical command support ranges.
+         */
+        readonly get: operations["contract_discovery_api_contract_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/auth/login": {
         readonly parameters: {
             readonly query?: never;
@@ -350,6 +370,28 @@ export interface components {
             readonly entity_type: "journey";
             /** Record Version */
             readonly record_version: number;
+        };
+        /** CommandVersionSupport */
+        readonly CommandVersionSupport: {
+            /** Command Type */
+            readonly command_type: string;
+            /** Current */
+            readonly current: number;
+            /** Maximum Supported */
+            readonly maximum_supported: number;
+            /** Minimum Supported */
+            readonly minimum_supported: number;
+        };
+        /** ContractDiscoveryResponse */
+        readonly ContractDiscoveryResponse: {
+            readonly api: components["schemas"]["SupportedVersionRange"];
+            /** Commands */
+            readonly commands: readonly components["schemas"]["CommandVersionSupport"][];
+            /**
+             * Schema Version
+             * @constant
+             */
+            readonly schema_version: "1";
         };
         /** ErrorBody */
         readonly ErrorBody: {
@@ -780,6 +822,15 @@ export interface components {
             readonly authenticated: true;
             readonly user: components["schemas"]["UserResponse"];
         };
+        /** SupportedVersionRange */
+        readonly SupportedVersionRange: {
+            /** Current */
+            readonly current: number;
+            /** Maximum Supported */
+            readonly maximum_supported: number;
+            /** Minimum Supported */
+            readonly minimum_supported: number;
+        };
         /** UserResponse */
         readonly UserResponse: {
             /** Display Name */
@@ -824,6 +875,94 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readonly contract_discovery_api_contract_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContractDiscoveryResponse"];
+                };
+            };
+            /** @description Authentication required or credentials invalid */
+            readonly 401: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authenticated request is not permitted or CSRF check failed */
+            readonly 403: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            readonly 404: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Version or uniqueness conflict */
+            readonly 409: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request validation failed */
+            readonly 422: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unexpected server error */
+            readonly 500: {
+                headers: {
+                    /** @description Request correlation identifier. */
+                    readonly "X-Request-ID"?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly login_route_api_v1_auth_login_post: {
         readonly parameters: {
             readonly query?: never;

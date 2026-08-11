@@ -1,6 +1,6 @@
 # Module and package boundaries
 
-**Status:** Implemented Phase 1 boundary foundation; target packages remain inactive
+**Status:** Implemented Phase 1 boundary foundation with active validated API client
 
 **Authority:** [`module-boundaries.json`](module-boundaries.json) is the machine-enforced active-root and import-policy registry. [`ADR-002`](decisions/ADR-002-CONTRACT-AUTHORITY.md) remains the HTTP contract-authority decision.
 
@@ -21,14 +21,15 @@ Only these modular-monolith product roots are active:
 | `apps/api`              | Python project `trax-os-api`          | FastAPI/Pydantic application, current server-backed application/persistence modules and tests | No npm exports                                   |
 | `apps/web`              | npm workspace `@trax-os/web`          | URL-routed React application, repository ports and concrete web adapters                      | Private application; no package exports          |
 | `packages/api-contract` | npm workspace `@trax-os/api-contract` | Generator-owned OpenAPI, TypeScript declaration and runtime-fixture projections               | `.`, `./openapi.json`, `./runtime-fixtures.json` |
+| `packages/api-client`   | npm workspace `@trax-os/api-client`   | Maintained same-origin transport/negotiation over generated operation and validator metadata  | `.`                                              |
 
-The sole active cross-root dependency is:
+The active cross-root dependency graph is:
 
 ```text
-apps/web → packages/api-contract
+apps/web → packages/api-client → packages/api-contract
 ```
 
-Cross-root relative imports are forbidden. Consumers must use the declared package name and an exported subpath, and the dependency must exist in the consuming manifest. `packages/api-contract` has no edge back to an application root.
+Cross-root relative imports are forbidden. Consumers must use the declared package name and an exported subpath, and the dependency must exist in the consuming manifest. The contract package has no reverse edge, and web no longer bypasses the runtime client to consume static projections directly.
 
 The semantic owner is read from the repository-wide default in `.github/CODEOWNERS`. During the current single-owner v0 phase, enforcement requires exactly one non-comment rule, `* @Maurice-aXeTech`; an additional wildcard owner or path override fails. Supporting later multi-owner/path-specific semantics requires a reviewed registry-schema/checker extension rather than silently weakening this deterministic policy.
 
@@ -41,7 +42,7 @@ The following canonical target paths are reservations only:
 ```text
 apps/mobile            apps/desktop         apps/worker
 apps/mcp-server        apps/atlas
-packages/api-client    packages/domain      packages/commands
+packages/domain        packages/commands
 packages/queries       packages/access-control
 packages/change-engine packages/sync-engine packages/sync-powersync
 packages/credential-store packages/offline-store packages/ui
@@ -58,7 +59,7 @@ Activation requires, in the same reviewed change:
 5. migration and compatibility impact;
 6. runtime/security evidence required by that package's product boundary.
 
-Issue #12 does not create mobile, desktop, worker, MCP, Atlas, command, query, sync, offline, credential, UI or API-client implementations.
+Issue #15 activates only the browser runtime client. Issue #12 still does not create mobile, desktop, worker, MCP, Atlas, command, query, sync, offline, credential or UI implementations.
 
 ## 4. TypeScript and JavaScript boundaries
 
@@ -81,7 +82,7 @@ feature or repository interface → concrete adapter           forbidden
 
 The current web structure is intentionally modest; this is not a claim that all target feature packages exist. Tooling sources (`vite.config.ts`, `eslint.config.js`, and `apps/web/scripts`) are classified separately from application source.
 
-Within `packages/api-contract`, generated sources are the `generated` layer. They cannot import application, feature, repository or adapter code. The checker verifies the exact package inventory (manifest, README and generated projections) and public export targets. `contract:check`, not the boundary checker, remains responsible for deterministic generated content and byte drift.
+Within `packages/api-contract`, generated sources are the `generated` layer. Within `packages/api-client`, generated metadata cannot import maintained client runtime, while maintained runtime may consume the generated projection and public contract types. Neither package may import application, feature, repository or adapter code. The checker verifies both exact package inventories and public exports; `contract:check` remains responsible for two-run deterministic generated content and byte drift.
 
 The checker also rejects:
 
@@ -135,9 +136,9 @@ ADR-002 is unchanged:
 - public Pydantic models and FastAPI operation declarations are the editable HTTP authority;
 - deterministic OpenAPI is the language-neutral publication;
 - generated TypeScript and runtime fixtures are projections;
-- TypeScript adapters still validate untrusted runtime JSON and map wire values into client-owned models.
+- the API client validates untrusted request/response/error data centrally, while web adapters retain wire-to-domain mapping.
 
-No executable Python domain model is shared with TypeScript. No TypeScript feature model becomes server authority. The generated contract package cannot import application code, and issue #12 does not pre-create Issue #14 command schemas or Issue #15 runtime clients.
+No executable Python domain model is shared with TypeScript. No TypeScript feature model becomes server authority. The generated contract/client projections cannot import application code, and the same-origin client adds no native/offline authority.
 
 ## 7. CI and local validation
 
@@ -147,17 +148,17 @@ make boundaries-check
 make check
 ```
 
-`boundaries:check` runs 77 allowed/forbidden synthetic fixtures and then checks the real tree. `make check` includes it once and prints the explicit `Module boundaries are consistent` diagnostic. Foundation CI already executes `make check`, so no duplicate boundary run is added.
+`boundaries:check` runs 79 allowed/forbidden synthetic fixtures and then checks the real tree, now with four active roots and two directed edges. `make check` includes it once and prints the explicit `Module boundaries are consistent` diagnostic. Foundation CI already executes `make check`, so no duplicate boundary run is added.
 
 The fixture suite covers the valid graph, absent reservations, cross-root relative/deep/undeclared/disallowed imports, trusted-package alias shadowing, TypeScript aliases, rejected CommonJS/`getBuiltinModule` loaders, adapter reversals, static and dynamic evasion, generated reverse imports, manifest-only unknown/reverse/cyclic dependencies, npm/Python manifest inventory, exact TOML project names, classifications, Python dynamic-import aliases/destructuring/reverse imports/collisions, exact/stale/widened exceptions, file/directory symlinks, traversal, exact v0 ownership, registry layer/schema checks and generated/export inventory drift.
 
 ## 8. Migration and compatibility impact
 
 - **Database/Alembic:** none.
-- **Public HTTP contract:** none; authored Pydantic/FastAPI authority and generated content are unchanged.
-- **Runtime behavior:** none.
-- **npm:** root declares the same exact TypeScript compiler version already used by the web workspace so the repository checker has a direct locked dependency.
-- **Contract package:** `runtime-fixtures.json` receives a public package export; the existing web test now consumes that export rather than reaching across workspace roots.
-- **Future packages:** none activated.
+- **Public HTTP contract:** additive unversioned `/api/contract` discovery plus range schemas and canonical-command operation metadata; existing routes/operation IDs remain.
+- **Runtime behavior:** web traffic performs one cached fail-closed negotiation and validated transport; Journey update uses the canonical command route.
+- **npm:** `@trax-os/api-client` is activated with already-pinned TypeScript/Vitest/Prettier tooling and no new runtime dependency beyond `@trax-os/api-contract`.
+- **Database/deployment:** none.
+- **Future packages:** all other reservations remain inactive.
 
 Changing an active root, export, dependency edge, module classification or temporary exception is an architecture change and must update the registry, this document, fixtures and delivery traceability together.

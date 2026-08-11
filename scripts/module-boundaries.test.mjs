@@ -52,6 +52,14 @@ function baseRegistry() {
         kind: "generated-projection",
         publicExports: [".", "./openapi.json", "./runtime-fixtures.json"],
       },
+      {
+        path: "packages/api-client",
+        ecosystem: "npm",
+        packageName: "@trax-os/api-client",
+        owner: "@owner",
+        kind: "runtime-client",
+        publicExports: ["."],
+      },
     ],
     reservedRoots: [
       {
@@ -61,7 +69,10 @@ function baseRegistry() {
         activationGate: "approved issue and boundary update",
       },
     ],
-    rootEdges: [{ from: "apps/web", to: "packages/api-contract" }],
+    rootEdges: [
+      { from: "apps/web", to: "packages/api-client" },
+      { from: "packages/api-client", to: "packages/api-contract" },
+    ],
     typescript: {
       sourceExtensions: [".js", ".ts"],
       layerRules: [
@@ -74,6 +85,16 @@ function baseRegistry() {
           prefix: "generated",
           layer: "generated",
         },
+        {
+          root: "packages/api-client",
+          prefix: "generated",
+          layer: "generated",
+        },
+        {
+          root: "packages/api-client",
+          prefix: "src",
+          layer: "client-runtime",
+        },
       ],
       forbiddenLayerEdges: [
         { from: "feature", to: "adapter" },
@@ -82,6 +103,11 @@ function baseRegistry() {
         { from: "generated", to: "feature" },
         { from: "generated", to: "repository" },
         { from: "generated", to: "adapter" },
+        { from: "generated", to: "client-runtime" },
+        { from: "client-runtime", to: "application" },
+        { from: "client-runtime", to: "feature" },
+        { from: "client-runtime", to: "repository" },
+        { from: "client-runtime", to: "adapter" },
       ],
       generatedInventory: {
         root: "packages/api-contract",
@@ -91,6 +117,10 @@ function baseRegistry() {
           "generated/schema.ts",
           "package.json",
         ],
+      },
+      runtimeClientInventory: {
+        root: "packages/api-client",
+        files: ["generated/client.ts", "package.json", "src/index.ts"],
       },
     },
     python: {
@@ -127,7 +157,7 @@ function createFixture(mutator) {
     "package.json",
     JSON.stringify({
       private: true,
-      workspaces: ["apps/web", "packages/api-contract"],
+      workspaces: ["apps/web", "packages/api-client", "packages/api-contract"],
     }),
   );
   write(
@@ -135,13 +165,13 @@ function createFixture(mutator) {
     "apps/web/package.json",
     JSON.stringify({
       name: "@trax-os/web",
-      dependencies: { "@trax-os/api-contract": "0.1.0" },
+      dependencies: { "@trax-os/api-client": "0.1.0" },
     }),
   );
   write(
     root,
     "apps/web/src/features/use-contract.ts",
-    "import type { Api } from '@trax-os/api-contract';\nimport type { Port } from '../repositories/port';\nexport type Value = Api & Port;\n",
+    "import type { Client } from '@trax-os/api-client';\nimport type { Port } from '../repositories/port';\nexport type Value = Client & Port;\n",
   );
   write(
     root,
@@ -152,6 +182,25 @@ function createFixture(mutator) {
     root,
     "apps/web/src/adapters/adapter.ts",
     "import type { Port } from '../repositories/port'; export const adapter: Port = { ok: true };\n",
+  );
+  write(
+    root,
+    "packages/api-client/package.json",
+    JSON.stringify({
+      name: "@trax-os/api-client",
+      exports: { ".": "./src/index.ts" },
+      dependencies: { "@trax-os/api-contract": "0.1.0" },
+    }),
+  );
+  write(
+    root,
+    "packages/api-client/src/index.ts",
+    "import type { Api } from '@trax-os/api-contract'; export type Client = Api;\n",
+  );
+  write(
+    root,
+    "packages/api-client/generated/client.ts",
+    "export const operations = {};\n",
   );
   write(
     root,
@@ -222,9 +271,9 @@ test("accepts the exact active graph, exact Python debt exception and absent res
   const root = createFixture();
   try {
     assert.deepEqual(check(root), {
-      activeRoots: 3,
+      activeRoots: 4,
       reservedRoots: 1,
-      rootEdges: 1,
+      rootEdges: 2,
       pythonModules: 4,
     });
   } finally {
@@ -275,7 +324,7 @@ rejects(
   ({ write }) => {
     write(
       "apps/web/src/features/use-contract.ts",
-      "import type { Api } from '@trax-os/api-contract/generated/schema'; export type Value = Api;\n",
+      "import type { Client } from '@trax-os/api-client/src/index'; export type Value = Client;\n",
     );
   },
   /unexported deep import/,
@@ -512,6 +561,40 @@ rejects(
 );
 
 rejects(
+  "rejects runtime client inventory drift",
+  ({ write }) => {
+    write(
+      "packages/api-client/src/manual-transport.ts",
+      "export const manual = true;\n",
+    );
+  },
+  /runtime client inventory must be exactly/,
+);
+
+rejects(
+  "rejects runtime client files hidden under globally ignored directories",
+  ({ write }) => {
+    write(
+      "packages/api-client/dist/hidden.ts",
+      "export const hidden = true;\n",
+    );
+  },
+  /runtime client inventory must be exactly/,
+);
+
+rejects(
+  "rejects imports into ignored or unclassified active-root source",
+  ({ write }) => {
+    write("apps/web/dist/hidden.ts", "export const hidden = true;\n");
+    write(
+      "apps/web/src/features/use-contract.ts",
+      "import { hidden } from '../../dist/hidden'; export const value = hidden;\n",
+    );
+  },
+  /ignored or unclassified source/,
+);
+
+rejects(
   "rejects package export drift",
   ({ write }) => {
     write(
@@ -723,7 +806,7 @@ rejects(
         compilerOptions: {
           moduleResolution: "bundler",
           baseUrl: ".",
-          paths: { "@trax-os/api-contract": ["src/adapters/adapter.ts"] },
+          paths: { "@trax-os/api-client": ["src/adapters/adapter.ts"] },
         },
       }),
     );
@@ -741,9 +824,7 @@ rejects(
           moduleResolution: "bundler",
           baseUrl: ".",
           paths: {
-            "@trax-os/api-contract": [
-              "../../packages/api-contract/generated/schema.ts",
-            ],
+            "@trax-os/api-client": ["../../packages/api-client/src/index.ts"],
           },
         },
       }),
@@ -753,7 +834,7 @@ rejects(
       JSON.stringify({ name: "@trax-os/web", dependencies: {} }),
     );
   },
-  /undeclared internal dependency @trax-os\/api-contract/,
+  /undeclared internal dependency @trax-os\/api-client/,
 );
 
 rejects(
@@ -769,7 +850,7 @@ rejects(
         compilerOptions: {
           moduleResolution: "bundler",
           baseUrl: ".",
-          paths: { "@trax-os/api-contract": ["../mobile/src/shadow.ts"] },
+          paths: { "@trax-os/api-client": ["../mobile/src/shadow.ts"] },
         },
       }),
     );
@@ -873,7 +954,7 @@ test("accepts an intra-root tsconfig alias that respects layers", () => {
     );
   });
   try {
-    assert.equal(check(root).activeRoots, 3);
+    assert.equal(check(root).activeRoots, 4);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -887,7 +968,7 @@ rejects(
       JSON.stringify({
         name: "@trax-os/web",
         dependencies: {
-          "@trax-os/api-contract": "0.1.0",
+          "@trax-os/api-client": "0.1.0",
           "@trax-os/unknown": "0.1.0",
         },
       }),
@@ -1145,6 +1226,16 @@ rejects(
       "packages/api-contract/generated";
   },
   /generatedInventory.root must equal/,
+);
+
+rejects(
+  "binds runtime client inventory root to the runtime-client package",
+  ({ registry }) => {
+    registry.activeRoots.find(
+      (root) => root.path === "packages/api-client",
+    ).kind = "application";
+  },
+  /runtimeClientInventory.root must equal/,
 );
 
 rejects(

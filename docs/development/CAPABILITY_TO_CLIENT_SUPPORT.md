@@ -18,15 +18,15 @@ These are support-policy labels, not roadmap lifecycle statuses. They do not rep
 
 ## Current support matrix
 
-| Capability | Authenticated web | Android | macOS arm64 |
-|---|---|---|---|
-| Server authority | **Current (limited)** | **Target (gated)** | **Target (gated)** |
-| Reconstructable shell/cache | **Current (shell only)** | **Target (gated)** | **Target (gated)** |
+| Capability                       | Authenticated web           | Android                  | macOS arm64              |
+| -------------------------------- | --------------------------- | ------------------------ | ------------------------ |
+| Server authority                 | **Current (limited)**       | **Target (gated)**       | **Target (gated)**       |
+| Reconstructable shell/cache      | **Current (shell only)**    | **Target (gated)**       | **Target (gated)**       |
 | Encrypted native local authority | **Not supported by design** | **Target (spike-gated)** | **Target (spike-gated)** |
-| Offline sync and data writes | **Not supported** | **Target (spike-gated)** | **Target (spike-gated)** |
-| Device-only documents | **Target (gated)** | **Target (spike-gated)** | **Target (spike-gated)** |
-| Atlas/MCP | **Target (gated)** | **Target (gated)** | **Target (gated)** |
-| Production readiness | **Not supported** | **Not supported** | **Not supported** |
+| Offline sync and data writes     | **Not supported**           | **Target (spike-gated)** | **Target (spike-gated)** |
+| Device-only documents            | **Target (gated)**          | **Target (spike-gated)** | **Target (spike-gated)** |
+| Atlas/MCP                        | **Target (gated)**          | **Target (gated)**       | **Target (gated)**       |
+| Production readiness             | **Not supported**           | **Not supported**        | **Not supported**        |
 
 ## Capability rationale, evidence and gates
 
@@ -73,13 +73,13 @@ The linked test sources and workflow establish how the current web claims are ch
 
 ## Supported versions today
 
-| Client | Truthful current statement |
-|---|---|
-| Authenticated web | Development build `0.1.0`, using API contract `1`. No production browser or browser-version range is documented or attested. A local headless-browser/PWA check, when run, is test evidence only and is not a browser support policy. |
-| Android | No supported artifact, client version or minimum Android/API level. |
-| macOS arm64 | No supported artifact, client version or minimum macOS release. No signed or notarized client exists. |
+| Client            | Truthful current statement                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authenticated web | Development build `0.1.0`; the official same-origin client and server currently negotiate exact API `1..1` and `journey.update` `1..1`. This protocol range is not a production browser/version support attestation. A local headless-browser/PWA check remains test evidence only. |
+| Android           | No supported artifact, client version or minimum Android/API level.                                                                                                                                                                                                                 |
+| macOS arm64       | No supported artifact, client version or minimum macOS release. No signed or notarized client exists.                                                                                                                                                                               |
 
-The application and API values above are published by the current [`/api/v1/version`](../../apps/api/src/trax_api/routes.py) response and its generated [`runtime-fixtures.json`](../../packages/api-contract/generated/runtime-fixtures.json); they are not a production release attestation.
+Application SemVer remains informational at [`/api/v1/version`](../../apps/api/src/trax_api/routes.py). The stable `/api/contract` bootstrap publishes API and command ranges sourced from canonical server constants/registry and projected into generated fixtures/client metadata; neither endpoint is a production release attestation.
 
 ## Dependency and acceptance gates
 
@@ -93,9 +93,9 @@ Authenticated server-backed web and the reconstructable PWA shell do not depend 
 
 ## Discovery and compatibility boundary
 
-`GET /api/v1/capabilities` remains implemented **instance-runtime discovery**. Its `available|unavailable` values do not encode client platform, version range, authority class, offline guarantee or production readiness. This documentation matrix does not change that endpoint, its models, generated contracts or fixtures, and future capabilities must not be advertised there as available.
+`GET /api/v1/capabilities` remains implemented **instance-runtime discovery**. Its `available|unavailable` values do not encode client platform, version range, authority class, offline guarantee or production readiness. API/command compatibility is advertised separately by `GET /api/contract`; capabilities must not duplicate it.
 
-This slice has no API, command, MCP, sync, database, generated-contract, package, dependency, deployment or migration impact. Future client support changes require their owning compatibility and acceptance work before this matrix can be promoted.
+Issue #15 adds the same-origin API-client package, generated validation metadata and additive discovery contract without database/deployment migration. Future range widening/removal or production client support changes require separate compatibility, migration and acceptance review before this matrix can be promoted.
 
 ## Maintenance trigger
 

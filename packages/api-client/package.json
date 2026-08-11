@@ -1,0 +1,32 @@
+{
+  "name": "@trax-os/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Validated same-origin browser client for the Trax OS HTTP API",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "generated",
+    "src"
+  ],
+  "scripts": {
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "vitest run",
+    "check": "npm run format:check && npm run typecheck"
+  },
+  "dependencies": {
+    "@trax-os/api-contract": "0.1.0"
+  },
+  "devDependencies": {
+    "prettier": "3.5.3",
+    "typescript": "5.8.3",
+    "vitest": "3.2.7"
+  },
+  "license": "Apache-2.0"
+}

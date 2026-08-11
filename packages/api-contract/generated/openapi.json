@@ -74,6 +74,68 @@
         "title": "CommandEntityVersion",
         "type": "object"
       },
+      "CommandVersionSupport": {
+        "additionalProperties": false,
+        "properties": {
+          "command_type": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "title": "Command Type",
+            "type": "string"
+          },
+          "current": {
+            "minimum": 1.0,
+            "title": "Current",
+            "type": "integer"
+          },
+          "maximum_supported": {
+            "minimum": 1.0,
+            "title": "Maximum Supported",
+            "type": "integer"
+          },
+          "minimum_supported": {
+            "minimum": 1.0,
+            "title": "Minimum Supported",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "minimum_supported",
+          "maximum_supported",
+          "command_type"
+        ],
+        "title": "CommandVersionSupport",
+        "type": "object"
+      },
+      "ContractDiscoveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api": {
+            "$ref": "#/components/schemas/SupportedVersionRange"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/CommandVersionSupport"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "api",
+          "commands"
+        ],
+        "title": "ContractDiscoveryResponse",
+        "type": "object"
+      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -1175,6 +1237,33 @@
         "title": "SessionResponse",
         "type": "object"
       },
+      "SupportedVersionRange": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "minimum": 1.0,
+            "title": "Current",
+            "type": "integer"
+          },
+          "maximum_supported": {
+            "minimum": 1.0,
+            "title": "Maximum Supported",
+            "type": "integer"
+          },
+          "minimum_supported": {
+            "minimum": 1.0,
+            "title": "Minimum Supported",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "minimum_supported",
+          "maximum_supported"
+        ],
+        "title": "SupportedVersionRange",
+        "type": "object"
+      },
       "UserResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1252,6 +1341,144 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/contract": {
+      "get": {
+        "description": "Advertise inclusive API and canonical command support ranges.",
+        "operationId": "contract_discovery_api_contract_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractDiscoveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or credentials invalid",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated request is not permitted or CSRF check failed",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Version or uniqueness conflict",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Request correlation identifier.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Contract Discovery",
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login_route_api_v1_auth_login_post",
@@ -2124,7 +2351,8 @@
             "SessionCookie": []
           }
         ],
-        "summary": "Canonical Update Journey"
+        "summary": "Canonical Update Journey",
+        "x-trax-command-type": "journey.update"
       }
     },
     "/api/v1/journeys": {

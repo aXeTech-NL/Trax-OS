@@ -4,10 +4,12 @@ WORKDIR /workspace
 
 COPY package.json package-lock.json ./
 COPY apps/web/package.json ./apps/web/package.json
+COPY packages/api-client/package.json ./packages/api-client/package.json
 COPY packages/api-contract/package.json ./packages/api-contract/package.json
 RUN npm ci
 
 COPY apps/web ./apps/web
+COPY packages/api-client ./packages/api-client
 COPY packages/api-contract/generated ./packages/api-contract/generated
 RUN npm run build --workspace @trax-os/web
 

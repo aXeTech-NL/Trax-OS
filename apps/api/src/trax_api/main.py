@@ -16,7 +16,7 @@ from trax_api.errors import (
     validation_exception_handler,
 )
 from trax_api.request_id import request_id_middleware
-from trax_api.routes import api_router, health_router
+from trax_api.routes import api_router, contract_router, health_router
 from trax_api.server_errors import application_error_handler
 from trax_api.server_routes import router as server_router
 from trax_api.settings import load_settings
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     application.add_exception_handler(ApplicationError, application_error_handler)
     application.add_exception_handler(Exception, unexpected_exception_handler)
     application.include_router(health_router)
+    application.include_router(contract_router)
     application.include_router(api_router)
     application.include_router(server_router)
     return application

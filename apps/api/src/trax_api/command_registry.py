@@ -32,6 +32,14 @@ class QueryDefinition:
     permission: str
 
 
+@dataclass(frozen=True)
+class CommandVersionRange:
+    command_type: str
+    current: int
+    minimum_supported: int
+    maximum_supported: int
+
+
 def _immutable_registry(definitions: tuple[CommandDefinition, ...]):
     values: dict[tuple[str, int], CommandDefinition] = {}
     for definition in definitions:
@@ -76,6 +84,33 @@ ROLE_PERMISSIONS = MappingProxyType(
 
 def role_allows(role: str, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, frozenset())
+
+
+def command_version_ranges(
+    definitions: tuple[CommandDefinition, ...] | None = None,
+) -> tuple[CommandVersionRange, ...]:
+    """Project contiguous positive server command ranges without inventing support."""
+
+    source = definitions if definitions is not None else tuple(COMMANDS.values())
+    grouped: dict[str, set[int]] = {}
+    for definition in source:
+        if definition.version < 1:
+            raise ValueError("Command versions must be positive")
+        grouped.setdefault(definition.command_type, set()).add(definition.version)
+    ranges: list[CommandVersionRange] = []
+    for command_type, candidates in sorted(grouped.items()):
+        versions = sorted(candidates)
+        if versions != list(range(versions[0], versions[-1] + 1)):
+            raise ValueError(f"Command versions must be contiguous: {command_type}")
+        ranges.append(
+            CommandVersionRange(
+                command_type=command_type,
+                current=versions[-1],
+                minimum_supported=versions[0],
+                maximum_supported=versions[-1],
+            )
+        )
+    return tuple(ranges)
 
 
 QUERIES = _immutable_query_registry(

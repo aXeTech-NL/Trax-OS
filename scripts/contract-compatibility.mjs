@@ -161,7 +161,8 @@ function violatesTraxCompatibilityPolicy(difference) {
         item === "security" ||
         item === "securitySchemes" ||
         item === "servers" ||
-        item === "operationId",
+        item === "operationId" ||
+        item === "x-trax-command-type",
     )
   ) {
     return true;

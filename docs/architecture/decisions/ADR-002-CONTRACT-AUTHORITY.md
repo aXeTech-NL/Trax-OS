@@ -30,15 +30,15 @@ Generation drift is not compatibility detection. Updating both generated files c
 
 ## Options considered
 
-| Concern | Pydantic/FastAPI → OpenAPI 3.1 | Raw JSON Schema authority | TypeSpec authority |
-|---|---|---|---|
-| Python runtime validation | Native; the authored models execute | Generated or mapped Pydantic required | Generated or mapped Pydantic required |
-| HTTP operation metadata | Native FastAPI declarations | Requires another authority | First-class HTTP model |
-| TypeScript projection | Existing pinned generator | Payload types only | Emitted OpenAPI or another emitter |
-| Determinism | Existing locked pipeline; strengthen to two runs | Still requires locked generators | Still requires locked compiler/emitters |
-| Compatibility | Compare emitted OpenAPI | Needs operation-level contract first | Compare emitted OpenAPI |
-| Current repository cost | Lowest | High and incomplete for an HTTP API | Additional language and mapping boundary |
-| Neutrality for future server languages | Lower | High for payloads | High for the whole API |
+| Concern                                | Pydantic/FastAPI → OpenAPI 3.1                   | Raw JSON Schema authority             | TypeSpec authority                       |
+| -------------------------------------- | ------------------------------------------------ | ------------------------------------- | ---------------------------------------- |
+| Python runtime validation              | Native; the authored models execute              | Generated or mapped Pydantic required | Generated or mapped Pydantic required    |
+| HTTP operation metadata                | Native FastAPI declarations                      | Requires another authority            | First-class HTTP model                   |
+| TypeScript projection                  | Existing pinned generator                        | Payload types only                    | Emitted OpenAPI or another emitter       |
+| Determinism                            | Existing locked pipeline; strengthen to two runs | Still requires locked generators      | Still requires locked compiler/emitters  |
+| Compatibility                          | Compare emitted OpenAPI                          | Needs operation-level contract first  | Compare emitted OpenAPI                  |
+| Current repository cost                | Lowest                                           | High and incomplete for an HTTP API   | Additional language and mapping boundary |
+| Neutrality for future server languages | Lower                                            | High for payloads                     | High for the whole API                   |
 
 ## Decision
 
@@ -66,7 +66,7 @@ All three files are generator-owned and committed. They are never hand-edited. A
 - Python API modules own wire validation, serialization and HTTP operation declarations.
 - The contract package generator owns OpenAPI, TypeScript declarations and runtime fixtures.
 - TypeScript adapters own runtime treatment of untrusted JSON and explicit wire-to-client-domain mapping. TypeScript feature/domain models remain client-owned and do not redefine the wire contract.
-- A future `packages/api-client` may own generated or maintained transport code, but issue #15 decides that client, version negotiation and supported ranges. No Python or TypeScript runtime-client package is claimed by this ADR.
+- `packages/api-client` owns the generated/maintained same-origin browser transport selected by [ADR-017](ADR-017-VERSIONED-RUNTIME-CLIENT.md). It remains a projection/consumer of this authored authority rather than a second HTTP contract source.
 - Human review remains the repository-wide v0.x CODEOWNER rule. This ADR does not invent unavailable owner teams or freeze the broader package map from issue #12.
 
 ### Determinism and drift
@@ -75,7 +75,7 @@ All three files are generator-owned and committed. They are never hand-edited. A
 
 ### Compatibility policy
 
-Before supported release ranges are implemented in issue #15:
+The compatibility check remains authoritative for source changes even after the exact initial `1..1` client ranges selected by ADR-017:
 
 - every pull request is compared with the base branch's committed OpenAPI document;
 - pushes to `main` are compared with the event's prior revision, and manual runs require an explicit trusted commit SHA;
@@ -108,7 +108,7 @@ The Python suite validates representative routed request/response models, serial
 - Some cross-field Pydantic behavior cannot be represented fully by generated static types; adapters must handle stable server validation errors.
 - The current TypeScript package is static-only and most handwritten adapters still need explicit runtime parsing and conformance as their slices evolve.
 - Compatibility classification can be conservative or incomplete for future OpenAPI keywords. New schema constructs require new fixtures before reliance.
-- Release-baseline selection, deprecation windows, version negotiation and a generated runtime client remain issue #15 scope.
+- ADR-017 implements exact initial range negotiation and a generated/maintained runtime client; future range widening, support removal and any deprecation window remain separately reviewed lifecycle decisions.
 
 ## Reconsideration triggers
 
@@ -123,7 +123,7 @@ Reconsider a neutral authored authority through a new ADR when at least one is t
 ## Non-goals
 
 - freezing the complete modular-monolith/package map (issue #12);
-- implementing a generated runtime client or supported-version negotiation (issue #15);
+- widening/removing supported client ranges or adding native/cross-origin/offline client authority beyond ADR-017;
 - making browser web local-authoritative;
 - changing persistence, RLS, CSRF, audit/change or lifecycle policy;
 - claiming OpenAPI schema conformance proves domain or security behavior.

@@ -135,7 +135,11 @@ function validateRegistry(raw) {
     nonEmptyString(item.packageName, `activeRoots[${index}].packageName`);
     if (item.owner !== raw.ownerAuthority.owner)
       fail(`active root ${item.path} owner must equal CODEOWNERS authority`);
-    if (!["application", "generated-projection"].includes(item.kind))
+    if (
+      !["application", "generated-projection", "runtime-client"].includes(
+        item.kind,
+      )
+    )
       fail(`active root ${item.path} has unsupported kind`);
     const exports = array(
       item.publicExports,
@@ -202,6 +206,7 @@ function validateRegistry(raw) {
       "layerRules",
       "forbiddenLayerEdges",
       "generatedInventory",
+      "runtimeClientInventory",
     ],
     "typescript",
   );
@@ -277,6 +282,32 @@ function validateRegistry(raw) {
   unique(generatedFiles, "typescript.generatedInventory.files");
   for (const item of generatedFiles)
     relativePath(item, "typescript.generatedInventory file");
+  exactKeys(
+    raw.typescript.runtimeClientInventory,
+    ["root", "files"],
+    "typescript.runtimeClientInventory",
+  );
+  const runtimeClientRoot = relativePath(
+    raw.typescript.runtimeClientInventory.root,
+    "typescript.runtimeClientInventory.root",
+  );
+  const runtimeClients = active.filter(
+    (item) => item.kind === "runtime-client",
+  );
+  if (
+    runtimeClients.length !== 1 ||
+    runtimeClients[0].path !== runtimeClientRoot
+  )
+    fail(
+      "typescript.runtimeClientInventory.root must equal the sole active runtime-client root",
+    );
+  const runtimeClientFiles = array(
+    raw.typescript.runtimeClientInventory.files,
+    "typescript.runtimeClientInventory.files",
+  );
+  unique(runtimeClientFiles, "typescript.runtimeClientInventory.files");
+  for (const item of runtimeClientFiles)
+    relativePath(item, "typescript.runtimeClientInventory file");
 
   exactKeys(
     raw.python,
@@ -969,6 +1000,10 @@ function verifyTypeScript(root, registry, manifests) {
       );
     }
     const targetInfo = fileInfo.get(realTarget);
+    if (!targetInfo && extensions.has(path.extname(realTarget)))
+      fail(
+        `${source.active.path}/${source.relative}:${imported.line}: import resolves to ignored or unclassified source ${path.relative(root, realTarget)}`,
+      );
     if (
       targetInfo &&
       forbiddenLayers.has(`${source.layer}->${targetInfo.layer}`)
@@ -1084,21 +1119,26 @@ function verifyTypeScript(root, registry, manifests) {
       }
     }
   }
-  const inventoryRoot = safeRepositoryPath(
-    root,
-    registry.typescript.generatedInventory.root,
-    "typescript.generatedInventory.root",
-  );
-  const actual = walkFiles(root, inventoryRoot, ignored)
-    .map((filename) =>
-      path.relative(inventoryRoot, filename).split(path.sep).join("/"),
-    )
-    .sort();
-  const expected = [...registry.typescript.generatedInventory.files].sort();
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
-    fail(
-      `generated contract inventory must be exactly ${expected.join(", ")}; received ${actual.join(", ")}`,
+  for (const [label, inventory] of [
+    ["generated contract", registry.typescript.generatedInventory],
+    ["runtime client", registry.typescript.runtimeClientInventory],
+  ]) {
+    const inventoryRoot = safeRepositoryPath(
+      root,
+      inventory.root,
+      `typescript ${label} inventory root`,
     );
+    const actual = walkFiles(root, inventoryRoot, new Set(["node_modules"]))
+      .map((filename) =>
+        path.relative(inventoryRoot, filename).split(path.sep).join("/"),
+      )
+      .sort();
+    const expected = [...inventory.files].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      fail(
+        `${label} inventory must be exactly ${expected.join(", ")}; received ${actual.join(", ")}`,
+      );
+  }
 }
 
 function verifyPython(registry, report) {

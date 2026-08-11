@@ -1,3 +1,5 @@
+import { ApiClientError, TraxApiClient } from "@trax-os/api-client";
+
 import type {
   AuthRepository,
   AuthUser,
@@ -6,99 +8,78 @@ import type {
 } from "../repositories/auth-repository";
 
 export class HttpAuthRepository implements AuthRepository {
+  constructor(private readonly client = new TraxApiClient()) {}
+
   async session(): Promise<AuthUser | null> {
-    const response = await fetch("/api/v1/auth/session", {
-      credentials: "same-origin",
-    });
-    if (response.status === 401) return null;
-    return userFrom(await json(response));
+    try {
+      return userFrom(
+        await this.client.request("session_route_api_v1_auth_session_get", {}),
+      );
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 401) return null;
+      throw repositoryError(error);
+    }
   }
 
   async register(input: RegisterInput): Promise<AuthUser> {
-    return userFrom(
-      await json(
-        await fetch("/api/v1/auth/register", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+    try {
+      return userFrom(
+        await this.client.request("register_route_api_v1_auth_register_post", {
+          body: {
             email: input.email,
             password: input.password,
             display_name: input.displayName,
-          }),
+          },
         }),
-      ),
-    );
+      );
+    } catch (error) {
+      throw repositoryError(error);
+    }
   }
 
   async login(input: LoginInput): Promise<AuthUser> {
-    return userFrom(
-      await json(
-        await fetch("/api/v1/auth/login", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
+    try {
+      return userFrom(
+        await this.client.request("login_route_api_v1_auth_login_post", {
+          body: input,
         }),
-      ),
-    );
+      );
+    } catch (error) {
+      throw repositoryError(error);
+    }
   }
 
   async logout(): Promise<void> {
-    await json(
-      await fetch("/api/v1/auth/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "X-CSRF-Token": csrfToken() },
-      }),
+    try {
+      await this.client.request("logout_route_api_v1_auth_logout_post", {});
+    } catch (error) {
+      throw repositoryError(error);
+    }
+  }
+}
+
+function repositoryError(error: unknown): Error {
+  if (error instanceof ApiClientError)
+    return new Error(
+      error.code === "invalid_credentials"
+        ? error.code
+        : error.code || "server_error",
     );
-  }
+  return error instanceof Error ? error : new Error("server_error");
 }
 
-function csrfToken(): string {
-  const value = document.cookie
-    .split("; ")
-    .find((cookie) => cookie.startsWith("trax_csrf="))
-    ?.split("=")[1];
-  return value ? decodeURIComponent(value) : "";
-}
-
-async function json(response: Response): Promise<unknown> {
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const code = errorCode(body);
-    throw new Error(
-      code === "invalid_credentials" ? code : code || "server_error",
-    );
-  }
-  return body;
-}
-
-function errorCode(value: unknown): string {
-  if (!record(value) || !record(value.error)) return "";
-  return typeof value.error.code === "string" ? value.error.code : "";
-}
-
-function userFrom(value: unknown): AuthUser {
-  if (!record(value) || !record(value.user))
-    throw new Error("invalid_response");
-  const user = value.user;
-  if (
-    typeof user.id !== "string" ||
-    typeof user.email !== "string" ||
-    typeof user.display_name !== "string" ||
-    typeof user.workspace_id !== "string"
-  ) {
-    throw new Error("invalid_response");
-  }
-  return {
-    id: user.id,
-    email: user.email,
-    displayName: user.display_name,
-    workspaceId: user.workspace_id,
+function userFrom(value: {
+  readonly user: {
+    readonly id: string;
+    readonly email: string;
+    readonly display_name: string;
+    readonly workspace_id: string;
   };
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+}): AuthUser {
+  return {
+    id: value.user.id,
+    email: value.user.email,
+    displayName: value.user.display_name,
+    workspaceId: value.user.workspace_id,
+  };
 }

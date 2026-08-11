@@ -6,14 +6,16 @@
   "license": "Apache-2.0",
   "workspaces": [
     "apps/web",
+    "packages/api-client",
     "packages/api-contract"
   ],
   "scripts": {
     "predev": "npm ci && uv sync --project apps/api --locked",
     "dev": "concurrently -k -n api,web -c blue,green \"uv run --project apps/api uvicorn trax_api.main:app --reload --port 18000\" \"npm run dev --workspace @trax-os/web\"",
     "generate": "node scripts/contracts.mjs generate",
-    "contract:check": "node scripts/contracts.mjs check && node --test scripts/contracts.test.mjs scripts/contract-compatibility.test.mjs",
+    "contract:check": "node scripts/contracts.mjs check && node --test scripts/contracts.test.mjs scripts/generate-api-client.test.mjs scripts/contract-compatibility.test.mjs scripts/support-compatibility.test.mjs",
     "contract:compat": "node scripts/contract-compatibility.mjs",
+    "support:compat": "node scripts/support-compatibility.mjs",
     "architecture:check": "node scripts/architecture-decisions.mjs",
     "boundaries:check": "node --test scripts/module-boundaries.test.mjs && node scripts/module-boundaries.mjs",
     "security:check": "node --test scripts/check-threat-model.test.mjs && node scripts/check-threat-model.mjs docs/security/phase-0-threat-model.json",

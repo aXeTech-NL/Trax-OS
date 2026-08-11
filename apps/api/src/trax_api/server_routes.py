@@ -190,7 +190,7 @@ async def update_journey(
     "/commands/journey.update",
     response_model=JourneyUpdateCommandResponse,
     responses=SUCCESS_RESPONSE,
-    openapi_extra=MUTATION_OPENAPI_EXTRA,
+    openapi_extra={**MUTATION_OPENAPI_EXTRA, "x-trax-command-type": "journey.update"},
 )
 async def canonical_update_journey(
     command: JourneyUpdateCommand, request: Request, session: Session

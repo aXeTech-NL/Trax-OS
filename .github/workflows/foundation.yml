@@ -87,7 +87,11 @@ jobs:
           fi
           git show "$CONTRACT_BASE_SHA:packages/api-contract/generated/openapi.json" \
             > "$RUNNER_TEMP/base-openapi.json"
-          make contract-compat BASE_CONTRACT="$RUNNER_TEMP/base-openapi.json"
+          git show "$CONTRACT_BASE_SHA:packages/api-contract/generated/runtime-fixtures.json" \
+            > "$RUNNER_TEMP/base-runtime-fixtures.json"
+          make contract-compat \
+            BASE_CONTRACT="$RUNNER_TEMP/base-openapi.json" \
+            BASE_RUNTIME_FIXTURES="$RUNNER_TEMP/base-runtime-fixtures.json"
       - name: Prove production PWA navigation works offline
         run: npm run test:pwa --workspace @trax-os/web
       - name: Audit npm dependencies

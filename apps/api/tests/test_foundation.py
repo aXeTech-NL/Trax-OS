@@ -20,9 +20,23 @@ def test_health_endpoints_have_typed_responses() -> None:
 
 def test_version_and_capability_discovery() -> None:
     with TestClient(create_app()) as client:
+        contract = client.get("/api/contract")
         version = client.get("/api/v1/version")
         capabilities = client.get("/api/v1/capabilities")
 
+    assert contract.json() == {
+        "schema_version": "1",
+        "api": {"current": 1, "minimum_supported": 1, "maximum_supported": 1},
+        "commands": [
+            {
+                "command_type": "journey.update",
+                "current": 1,
+                "minimum_supported": 1,
+                "maximum_supported": 1,
+            }
+        ],
+    }
+    assert set(contract.json()) == {"schema_version", "api", "commands"}
     assert version.json() == {"application": "Trax OS", "version": "0.1.0", "api_version": "1"}
     assert capabilities.json() == {
         "schema_version": "1",
@@ -167,8 +181,12 @@ def test_openapi_exposes_typed_foundation_contracts_and_correlation() -> None:
     assert schema["paths"]["/api/v1/capabilities"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]["$ref"].endswith("/CapabilitiesResponse")
+    assert schema["paths"]["/api/contract"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]["$ref"].endswith("/ContractDiscoveryResponse")
 
     for path in (
+        "/api/contract",
         "/health/live",
         "/health/ready",
         "/api/v1/version",

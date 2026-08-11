@@ -41,7 +41,7 @@ Self-hosting          Docker Compose in V1; Helm/Kubernetes after V1
 
 The complexity of composite keys, row-level security, partial indexes, explicit constraints and migration control justifies direct SQLAlchemy/Alembic use rather than treating an ORM convenience layer as the schema authority.
 
-For the V1 HTTP API, public Pydantic wire models plus FastAPI path-operation declarations are the canonical authored contract. Deterministic OpenAPI 3.1 is the language-neutral publication/review artifact, and TypeScript declarations are generated static projections rather than runtime validators. [ADR-002](decisions/ADR-002-CONTRACT-AUTHORITY.md) defines ownership, compatibility policy and reconsideration triggers.
+For the V1 HTTP API, public Pydantic wire models plus FastAPI path-operation declarations are the canonical authored contract. Deterministic OpenAPI 3.1 is the language-neutral publication/review artifact, and TypeScript declarations remain static projections. The active same-origin [`@trax-os/api-client`](../../packages/api-client/README.md) adds generated runtime-schema/operation projections plus maintained validated transport and highest-overlap negotiation through the stable `/api/contract` bootstrap. [ADR-002](decisions/ADR-002-CONTRACT-AUTHORITY.md) defines contract ownership; [ADR-017](decisions/ADR-017-VERSIONED-RUNTIME-CLIENT.md) defines client scope and negotiation.
 
 ## 3. Public monorepo mapping
 
@@ -71,9 +71,9 @@ packages/
 └── ui/                  shared design-system implementation
 ```
 
-The tree above is the **target V1 map**, not a list of currently implemented packages. The machine-enforced [module and package boundary registry](MODULE_AND_PACKAGE_BOUNDARIES.md) currently activates only `apps/api`, `apps/web` and `packages/api-contract`. Every other concrete named target path is an inactive, non-required reservation until its owning issue and activation gates pass. `packages/model-provider-*` is only an unallocated naming family: each concrete provider path requires a reviewed registry entry before creation and is not claimed as a wildcard reservation.
+The tree above is the **target V1 map**, not a list of currently implemented packages. The machine-enforced [module and package boundary registry](MODULE_AND_PACKAGE_BOUNDARIES.md) currently activates `apps/api`, `apps/web`, `packages/api-contract` and `packages/api-client`. Every other concrete named target path is an inactive, non-required reservation until its owning issue and activation gates pass. `packages/model-provider-*` is only an unallocated naming family: each concrete provider path requires a reviewed registry entry before creation and is not claimed as a wildcard reservation.
 
-Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. TypeScript adapters retain explicit untrusted-JSON checks and wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
+Python domain models and TypeScript UI models are not forced into one executable package. Python API modules own HTTP wire constraints and operation declarations; `packages/api-contract` owns only generated projections. `packages/api-client` validates transport data but does not become contract authority; TypeScript adapters retain wire-to-domain mapping. CI regenerates artifacts twice, checks committed drift and rejects fixture-proven incompatible changes against the trusted base revision.
 
 ## 4. Backend module boundaries
 

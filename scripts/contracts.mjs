@@ -11,8 +11,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputDirectory = join(root, "packages", "api-contract", "generated");
+const contractOutputDirectory = join(
+  root,
+  "packages",
+  "api-contract",
+  "generated",
+);
+const clientOutputDirectory = join(root, "packages", "api-client", "generated");
 const generatedFiles = ["openapi.json", "schema.ts", "runtime-fixtures.json"];
+const allGeneratedFiles = [...generatedFiles, "client.ts"];
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
@@ -53,6 +60,26 @@ function generate(directory) {
     "apps/api/scripts/generate_runtime_fixtures.py",
     runtimeFixtures,
   ]);
+  const client = join(directory, "client.ts");
+  run("node", [
+    "scripts/generate-api-client.mjs",
+    openapi,
+    runtimeFixtures,
+    client,
+  ]);
+  run("npm", ["exec", "--", "prettier", "--write", client]);
+}
+
+function differingFiles(files, leftDirectory, rightDirectory) {
+  return files.filter((file) => {
+    try {
+      return !readFileSync(join(leftDirectory, file)).equals(
+        readFileSync(join(rightDirectory, file)),
+      );
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function differingGeneratedFiles(leftDirectory, rightDirectory) {
@@ -85,18 +112,27 @@ function main() {
     generate(firstDirectory);
 
     if (mode === "generate") {
-      mkdirSync(outputDirectory, { recursive: true });
+      mkdirSync(contractOutputDirectory, { recursive: true });
+      mkdirSync(clientOutputDirectory, { recursive: true });
       for (const file of generatedFiles) {
-        copyFileSync(join(firstDirectory, file), join(outputDirectory, file));
+        copyFileSync(
+          join(firstDirectory, file),
+          join(contractOutputDirectory, file),
+        );
       }
+      copyFileSync(
+        join(firstDirectory, "client.ts"),
+        join(clientOutputDirectory, "client.ts"),
+      );
       console.log(
-        "Generated OpenAPI, TypeScript and runtime contract fixtures.",
+        "Generated OpenAPI, TypeScript, runtime fixtures and validated-client metadata.",
       );
       return;
     }
 
     generate(secondDirectory);
-    const nondeterministic = differingGeneratedFiles(
+    const nondeterministic = differingFiles(
+      allGeneratedFiles,
       firstDirectory,
       secondDirectory,
     );
@@ -106,7 +142,19 @@ function main() {
       );
     }
 
-    const drift = differingGeneratedFiles(firstDirectory, outputDirectory);
+    const contractDrift = differingGeneratedFiles(
+      firstDirectory,
+      contractOutputDirectory,
+    );
+    const clientDrift = differingFiles(
+      ["client.ts"],
+      firstDirectory,
+      clientOutputDirectory,
+    );
+    const drift = [
+      ...contractDrift,
+      ...clientDrift.map((file) => `api-client/${file}`),
+    ];
     if (drift.length > 0) {
       throw new Error(
         `Contract drift detected: ${drift.join(", ")}. Run make generate.`,

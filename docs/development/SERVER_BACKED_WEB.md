@@ -16,12 +16,12 @@ The web application is never an authoritative browser-local product. Web users a
 - Server-authoritative Journey, stay/move timeline and packing CRUD.
 - Optimistic record versions and privacy-neutral not-found responses.
 - PostgreSQL constraints, cascades and RLS policies for Journey-owned records.
-- Database-aware readiness and capability discovery.
+- Database-aware readiness, capability discovery and stable `/api/contract` API/command range bootstrap.
 - English/Dutch registration, sign-in, session restoration and sign-out UI.
-- HTTP Journey repository with CSRF, optimistic versions and canonical reload after mutation.
+- One shared validated same-origin API client for auth/instance/Journey adapters, with cached exact `1..1` negotiation, CSRF metadata and canonical reload after mutation.
 - Clearing browser data removes only disposable session/locale/app cache; sign-in reconstructs authorised Journey state.
 
-Only Journey update has the production command/UoW skeleton: its existing `PUT` route and additive typed command route share one executor, locked expected-version CAS, scoped idempotency receipt and atomic change set/event. Legacy compatibility means the existing request and successful-response wire shape; authorization is deliberately corrected so every Journey, segment and packing mutation shares `journey.write` and only OWNER/EDITOR may write. Other mutations, generic undo execution and full change-history UX are not canonical yet. Email verification, password reset, MFA, invitations, additional workspaces, session/device administration, retention tombstones and native sync are not implemented and are not claimed.
+Only Journey update has the production command/UoW skeleton: the web uses the negotiated typed `journey.update@1` route with a fresh command UUID, and the retained `PUT` route shares the same executor, locked expected-version CAS, scoped idempotency receipt and atomic change set/event. Legacy compatibility means the existing request and successful-response wire shape; authorization is deliberately corrected so every Journey, segment and packing mutation shares `journey.write` and only OWNER/EDITOR may write. Other mutations, generic undo execution and full change-history UX are not canonical yet. Email verification, password reset, MFA, invitations, additional workspaces, session/device administration, retention tombstones and native sync are not implemented and are not claimed.
 
 ## Development
 
@@ -43,6 +43,10 @@ make compose-smoke
 The unprivileged web container serves the built PWA and proxies `/api` and `/health` to the internal API; it does not add browser-local authority or a second persistence path. The synthetic smoke proves registration, CSRF and Journey table access after the one-shot migration. See [`COMPOSE_EVALUATION.md`](COMPOSE_EVALUATION.md).
 
 `TRAX_DATABASE_URL` selects the authoritative PostgreSQL database for host-run commands; `TRAX_COMPOSE_DATABASE_URL` selects it on the Compose network. Production deployments must set `TRAX_SESSION_COOKIE_SECURE=true`, provide TLS and use managed secrets rather than the development credentials in `.env.example`.
+
+## Contract bootstrap
+
+`GET /api/contract` is public and privacy-neutral. It advertises positive inclusive API and per-command `current`/minimum/maximum ranges sourced from canonical server constants and the immutable command registry. The official browser client currently supports exact API `1..1` and `journey.update` `1..1`, selects the highest overlap and fails before versioned traffic on malformed or disjoint metadata. This preflight is compatibility UX, not a substitute for server validation or authorization.
 
 ## Auth routes
 

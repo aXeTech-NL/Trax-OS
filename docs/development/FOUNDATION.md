@@ -10,17 +10,18 @@ The v0.1 implementation contains only components with executable or checkable va
 - `apps/api`: FastAPI/Pydantic application and focused tests;
 - `apps/web`: URL-routed React client with an injected repository boundary;
 - `packages/api-contract`: reviewed generated OpenAPI and TypeScript contracts;
+- `packages/api-client`: validated same-origin browser transport with generated operation/runtime-schema metadata;
 - `compose.yaml`: PostgreSQL/PostGIS plus the migration, API and built web services used by the Phase 1 evaluation stack.
 
 The current feature baseline adds explicit identity/session, Personal workspace, Journey, timeline and packing tables and migrations described in [`SERVER_BACKED_WEB.md`](SERVER_BACKED_WEB.md). Synchronisation, email verification/reset, MFA, document cryptography, Atlas/MCP business flows, native clients and deployment remain absent. The earlier IndexedDB implementation is a superseded prototype only.
 
 ## Provisional tool choices
 
-npm 10 workspaces are used because npm is present in the supported local environment. `make` is the stable developer interface where practical, so a later package-manager decision does not need to rename common workflows. Issue #12 now freezes the three active roots, sole `apps/web → packages/api-contract` edge, public generated-package exports and honest current Python/TypeScript layers in the [module and package boundary registry](../architecture/MODULE_AND_PACKAGE_BOUNDARIES.md). Target native, worker, MCP, Atlas and shared-domain paths remain inactive reservations rather than empty scaffolding.
+npm 10 workspaces are used because npm is present in the supported local environment. `make` is the stable developer interface where practical, so a later package-manager decision does not need to rename common workflows. Issue #12 established the machine boundary registry; Issue #15 now activates four roots with the directed `apps/web → packages/api-client → packages/api-contract` graph, exact exports and honest Python/TypeScript layers. Target native, worker, MCP, Atlas and shared-domain paths remain inactive reservations rather than empty scaffolding.
 
-[ADR-002](../architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) accepts public Pydantic wire models plus FastAPI path-operation declarations as the V1 HTTP contract's canonical authored source. `make generate` serialises FastAPI OpenAPI with stable formatting, creates immutable TypeScript declarations with `openapi-typescript`, and produces privacy-neutral runtime fixtures from real instance routes. The generated package owns projections only; it is not a runtime client or a second editable authority.
+[ADR-002](../architecture/decisions/ADR-002-CONTRACT-AUTHORITY.md) accepts public Pydantic wire models plus FastAPI path-operation declarations as the V1 HTTP contract's canonical authored source. `make generate` serialises FastAPI OpenAPI with stable formatting, creates immutable TypeScript declarations with `openapi-typescript`, and produces privacy-neutral runtime fixtures from real instance routes. The contract package owns projections only. The separate API-client package combines generated projections with maintained same-origin transport without becoming a second editable HTTP authority.
 
-`make check` generates all contract artifacts twice in independent temporary directories, requires byte-identical results and checks the committed copies without modifying the worktree. Compatibility-policy fixtures prove representative additive and breaking classifications. It also runs `boundaries:check`, which exercises allowed/forbidden synthetic graphs and scans the real TypeScript/JavaScript and Python import trees. CI separately compares the candidate OpenAPI document with the trusted base Git revision, fails closed on external references and rejects breaking or unclassified differences. Generated TypeScript is static-only; transport adapters continue to validate untrusted JSON explicitly.
+`make check` generates all contract/client artifacts twice in independent temporary directories, requires byte-identical results and checks the committed copies without modifying the worktree. Compatibility-policy and fail-closed generator fixtures prove representative additive/breaking classifications and the supported schema subset. It also runs `boundaries:check`, which exercises allowed/forbidden synthetic graphs and scans the real TypeScript/JavaScript and Python import trees. CI separately compares candidate OpenAPI with the trusted base Git revision. The runtime client centrally validates unknown transport data; adapters retain client-domain mapping.
 
 ## Runtime shape
 
@@ -28,12 +29,13 @@ The API exposes:
 
 - `/health/live`: process liveness;
 - `/health/ready`: readiness of dependencies actually implemented in v0.1;
-- `/api/v1/version`: application and public API versions;
+- `/api/contract`: stable version-independent exact API/command support discovery;
+- `/api/v1/version`: informational application and current API versions;
 - `/api/v1/capabilities`: explicit capability discovery.
 
 Every response passes through request-ID middleware. A syntactically safe incoming `X-Request-ID` is preserved; otherwise a new opaque ID is returned. Expected and unexpected failures use the stable `error.code`, `error.message`, `error.details` and `error.request_id` envelope. The generic handler does not expose exception detail.
 
-The API now provides authenticated server-authoritative Journey/timeline/packing contracts. The connected web composition uses authenticated HTTP auth/Journey adapters and reloads canonical server state after mutations; no IndexedDB Journey authority remains. Components remain URL-addressable and tests use in-memory adapters where appropriate. Journey update is the first production canonical command: the legacy `PUT` adapts to the same registry/executor/UoW as the additive typed command route, with atomic receipt/change evidence. The web still uses its current diff-based save adapter; Issue #15 must provide the version-negotiating runtime command client before broader workflows migrate.
+The API now provides authenticated server-authoritative Journey/timeline/packing contracts. One shared client performs cached highest-overlap API/command negotiation, runtime request/response/error validation, same-origin credentials and OpenAPI-marked CSRF before the HTTP adapters map wire data. No IndexedDB Journey authority remains. Components remain URL-addressable and tests use in-memory adapters where appropriate. Journey update is the first production canonical command: web save now sends `journey.update@1` with a fresh command UUID, while the legacy `PUT` remains a compatibility adapter over the same executor/UoW. Other mutations remain legacy routes and canonical state is reloaded after save.
 
 The digest-pinned Compose evaluation images package the existing application without adding a second business path. A one-shot Alembic service must complete before the API can become ready; an unprivileged static web service serves the built PWA and proxies `/api` and `/health` to the internal API. API and web runtime containers are non-root, read-only and capability-dropped. The browser-facing port remains bound to loopback.
 

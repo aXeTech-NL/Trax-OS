@@ -39,6 +39,14 @@
       "owner": "@Maurice-aXeTech",
       "kind": "generated-projection",
       "publicExports": [".", "./openapi.json", "./runtime-fixtures.json"]
+    },
+    {
+      "path": "packages/api-client",
+      "ecosystem": "npm",
+      "packageName": "@trax-os/api-client",
+      "owner": "@Maurice-aXeTech",
+      "kind": "runtime-client",
+      "publicExports": ["."]
     }
   ],
   "reservedRoots": [
@@ -71,12 +79,6 @@
       "status": "inactive",
       "required": false,
       "activationGate": "Reviewed Atlas delivery issue plus package manifest, owner and boundary edges"
-    },
-    {
-      "path": "packages/api-client",
-      "status": "inactive",
-      "required": false,
-      "activationGate": "Issue #15 approval plus package manifest, exports, owner and boundary edges"
     },
     {
       "path": "packages/domain",
@@ -142,6 +144,10 @@
   "rootEdges": [
     {
       "from": "apps/web",
+      "to": "packages/api-client"
+    },
+    {
+      "from": "packages/api-client",
       "to": "packages/api-contract"
     }
   ],
@@ -196,6 +202,16 @@
         "root": "packages/api-contract",
         "prefix": "generated",
         "layer": "generated"
+      },
+      {
+        "root": "packages/api-client",
+        "prefix": "generated",
+        "layer": "generated"
+      },
+      {
+        "root": "packages/api-client",
+        "prefix": "src",
+        "layer": "client-runtime"
       }
     ],
     "forbiddenLayerEdges": [
@@ -222,6 +238,26 @@
       {
         "from": "generated",
         "to": "adapter"
+      },
+      {
+        "from": "generated",
+        "to": "client-runtime"
+      },
+      {
+        "from": "client-runtime",
+        "to": "application"
+      },
+      {
+        "from": "client-runtime",
+        "to": "feature"
+      },
+      {
+        "from": "client-runtime",
+        "to": "repository"
+      },
+      {
+        "from": "client-runtime",
+        "to": "adapter"
       }
     ],
     "generatedInventory": {
@@ -232,6 +268,22 @@
         "generated/runtime-fixtures.json",
         "generated/schema.ts",
         "package.json"
+      ]
+    },
+    "runtimeClientInventory": {
+      "root": "packages/api-client",
+      "files": [
+        "README.md",
+        "generated/client.ts",
+        "package.json",
+        "src/client.test.ts",
+        "src/client.ts",
+        "src/index.ts",
+        "src/negotiation.test.ts",
+        "src/negotiation.ts",
+        "src/validator.test.ts",
+        "src/validator.ts",
+        "tsconfig.json"
       ]
     }
   },
